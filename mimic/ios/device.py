@@ -378,6 +378,14 @@ class IOSDevice:
             return {"ok": 0, "error": "frame pull failed"}
         asm_fps = max(1, round(r.get("fps") or fps))
         mk = os.path.join(ROOT, "tools", "mkvideo")
+        if not os.path.exists(mk):
+            # Build the tiny Swift muxer on demand (needs Xcode command line tools).
+            src = os.path.join(ROOT, "tools", "mkvideo.swift")
+            _sh(["swiftc", "-O", src, "-o", mk], timeout=180)
+        if not os.path.exists(mk):
+            return {"ok": 0, "error": "mkvideo not built — install Xcode command line "
+                    "tools (xcode-select --install) so swiftc can compile tools/mkvideo.swift",
+                    "frames": got}
         res = _sh([mk, local, str(asm_fps), out], timeout=120)
         ok = os.path.exists(out) and os.path.getsize(out) > 0
         return {"ok": 1 if ok else 0, "out": out if ok else None,

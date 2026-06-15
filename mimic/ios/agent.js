@@ -40,7 +40,6 @@ function digitizer(nx, ny, down){
 }
 function sleepMs(ms){ var t=Date.now(); while(Date.now()-t<ms){} }
 
-function tap(x, y){ digitizer(x/W, y/H, true); sleepMs(60); digitizer(x/W, y/H, false); }
 function swipe(x1,y1,x2,y2,ms){
   var steps=Math.max(8, Math.round((ms||300)/16));
   digitizer(x1/W,y1/H,true);
@@ -412,28 +411,6 @@ function readFileB64(path){
   }catch(e){ return null; }
 }
 
-// play an audio file out the device speaker at media volume (ignores the mute
-// switch). Called from the foreground InCallService during a call: the
-// loudspeaker plays it and the call's mic relays it to the callee. MixWithOthers
-// keeps it from interrupting the live call.
-var _player = null;
-function playFile(path, mix){
-  try{
-    var sess = ObjC.classes.AVAudioSession.sharedInstance();
-    var cat = ObjC.classes.NSString.stringWithString_('AVAudioSessionCategoryPlayback');
-    if (mix) sess.setCategory_withOptions_error_(cat, 1, NULL); // 1 = MixWithOthers
-    else sess.setCategory_error_(cat, NULL);
-    sess.setActive_error_(1, NULL);
-    var url = ObjC.classes.NSURL.fileURLWithPath_(ObjC.classes.NSString.stringWithString_(path));
-    var p = ObjC.classes.AVAudioPlayer.alloc().initWithContentsOfURL_error_(url, NULL);
-    if (p.isNull()) return { err: 'player nil' };
-    p.setVolume_(1.0); p.prepareToPlay();
-    var r = p.play();
-    _player = p; // retain so it isn't deallocated mid-playback
-    return { ok: 1, play: r, dur: p.duration() };
-  }catch(e){ return { err: '' + e }; }
-}
-
 // speak text straight into the live call's telephony UPLINK so the callee hears
 // it — Apple's official AVSpeechSynthesizer.mixToTelephonyUplink (iOS 13+). No
 // acoustic relay, no baseband fight: iOS mixes the synthesized speech into the
@@ -480,114 +457,7 @@ function speakUplink(text, lang, rate, pitch){
   }catch(e){ return { err: '' + e }; }
 }
 
-// type into a chat/comment UITextField and SEND it. set_text alone sets .text
-// directly (no editingChanged), so the app never registers the text and the
-// send button never enables. This focuses the field, sets text, fires
-// EditingChanged, then triggers the return-send (delegate textFieldShouldReturn
-// + EditingDidEndOnExit) — the normal "press return to send" path.
-function allTextFields(){
-  var out=[];
-  var wins=ObjC.classes.UIApplication.sharedApplication().windows();
-  function walk(v){ if(!v||v.isNull())return; try{ if(v.isKindOfClass_(ObjC.classes.UITextField)) out.push(v); }catch(e){}
-    var s=v.subviews(); if(s&&!s.isNull()) for(var i=0;i<s.count();i++) walk(s.objectAtIndex_(i)); }
-  for(var i=0;i<wins.count();i++) walk(wins.objectAtIndex_(i));
-  return out;
-}
-function chatSend(text){
-  var out=null;
-  ObjC.schedule(ObjC.mainQueue, function(){
-    try{
-      var tfs=allTextFields();
-      if(!tfs.length){ out={err:'no UITextField'}; return; }
-      var tf=tfs[tfs.length-1];           // input bar is usually the last-added field
-      var r={count:tfs.length, cls:''+tf.$className};
-      try{ r.ph = tf.placeholder()? ''+tf.placeholder().toString() : ''; }catch(e){}
-      try{ tf.becomeFirstResponder(); }catch(e){}
-      tf.setText_(ObjC.classes.NSString.stringWithString_(text));
-      try{ tf.sendActionsForControlEvents_(65536); }catch(e){}   // UIControlEventEditingChanged
-      try{ r.textNow=''+tf.text(); }catch(e){}
-      try{ var dg=tf.delegate(); if(dg&&!dg.isNull()&&dg.respondsToSelector_(ObjC.selector('textFieldShouldReturn:'))){ dg.textFieldShouldReturn_(tf); r.dret=1; } }catch(e){ r.dgErr=''+e; }
-      try{ tf.sendActionsForControlEvents_(64); }catch(e){}        // UIControlEventEditingDidEndOnExit
-      out=r;
-    }catch(e){ out={err:''+e}; }
-  });
-  var n=0; while(out===null&&n<400){ Thread.sleep(0.01); n++; }
-  return out;
-}
-
-// smarter chat typer: the visible chat input is often a UITextView (or a
-// custom field) — not the first UITextField. Collect every editable view, pick
-// the one lowest on screen (the input bar) preferring UITextView, focus it, set
-// the text and fire the change event so the app enables its send button.
-function editableViews(){
-  var out=[];
-  var wins=ObjC.classes.UIApplication.sharedApplication().windows();
-  function walk(v){ if(!v||v.isNull())return;
-    try{ if(v.isKindOfClass_(ObjC.classes.UITextField)||v.isKindOfClass_(ObjC.classes.UITextView)) out.push(v); }catch(e){}
-    var s=v.subviews(); if(s&&!s.isNull()) for(var i=0;i<s.count();i++) walk(s.objectAtIndex_(i)); }
-  for(var i=0;i<wins.count();i++) walk(wins.objectAtIndex_(i));
-  return out;
-}
-function chatType(text){
-  var out=null;
-  ObjC.schedule(ObjC.mainQueue, function(){
-    try{
-      var evs=editableViews(), info=[];
-      for(var i=0;i<evs.length;i++){ var v=evs[i], o={cls:''+v.$className};
-        try{ o.tv=v.isKindOfClass_(ObjC.classes.UITextView)?1:0; }catch(e){}
-        try{ var p=v.convertPoint_toView_([0,0], NULL); o.y=Math.round(p.y); }catch(e){ o.y=-1; }
-        try{ o.ph=(v.respondsToSelector_(ObjC.selector('placeholder'))&&v.placeholder())? ''+v.placeholder():''; }catch(e){}
-        info.push(o); }
-      if(!evs.length){ out={err:'no editable', all:info}; return; }
-      var pick=-1;
-      for(var i=0;i<info.length;i++){ if(info[i].tv){ pick=i; break; } }     // prefer UITextView
-      if(pick<0){ var by=-1; for(var i=0;i<info.length;i++){ if(info[i].y>by){ by=info[i].y; pick=i; } } }
-      var best=evs[pick];
-      best.becomeFirstResponder();
-      best.setText_(ObjC.classes.NSString.stringWithString_(text));
-      try{
-        if(info[pick].tv){ var dg=best.delegate(); if(dg&&!dg.isNull()&&dg.respondsToSelector_(ObjC.selector('textViewDidChange:'))) dg.textViewDidChange_(best); }
-        else best.sendActionsForControlEvents_(65536);
-      }catch(e){}
-      out={picked:info[pick], all:info, textNow:''+best.text()};
-    }catch(e){ out={err:''+e}; }
-  });
-  var n=0; while(out===null&&n<400){ Thread.sleep(0.01); n++; }
-  return out;
-}
-
-// press "return" on the chat UITextView to SEND. Chat inputs with no send
-// button send via the keyboard return: the app's textView:shouldChangeTextInRange:
-// replacementText: detects "\n" and fires the send. We invoke that delegate
-// path directly (and also try the UITextField return action as a fallback).
-function chatReturn(){
-  var out=null;
-  ObjC.schedule(ObjC.mainQueue, function(){
-    try{
-      var evs=editableViews(), r={};
-      var tv=null, tf=null;
-      for(var i=0;i<evs.length;i++){ try{
-        if(!tv && evs[i].isKindOfClass_(ObjC.classes.UITextView)) tv=evs[i];
-        if(!tf && evs[i].isKindOfClass_(ObjC.classes.UITextField)) tf=evs[i];
-      }catch(e){} }
-      if(tv){
-        var dg=tv.delegate();
-        if(dg&&!dg.isNull()&&dg.respondsToSelector_(ObjC.selector('textView:shouldChangeTextInRange:replacementText:'))){
-          var len=tv.text()? tv.text().length():0;
-          var res=dg.textView_shouldChangeTextInRange_replacementText_(tv, [len,0], ObjC.classes.NSString.stringWithString_('\n'));
-          r.tvReturn=res?1:0; r.via='textView.shouldChangeText';
-        } else r.tvNoDelegate=1;
-      }
-      if(tf){ try{ tf.sendActionsForControlEvents_(64); r.tfExit=1; }catch(e){} }
-      out=r;
-    }catch(e){ out={err:''+e}; }
-  });
-  var n=0; while(out===null&&n<400){ Thread.sleep(0.01); n++; }
-  return out;
-}
-
 rpc.exports = {
-  size: function(){ return {w:W,h:H}; },
   ui: function(){ var r=null; ObjC.schedule(ObjC.mainQueue,function(){ try{r=dumpUI();}catch(e){r={err:''+e};} }); var n=0; while(r===null&&n<400){Thread.sleep(0.01);n++;} return r; },
   activate: function(label, idx){ var r=null; ObjC.schedule(ObjC.mainQueue,function(){ try{r=axActivate(label, idx);}catch(e){r={err:''+e};} }); var n=0; while(r===null&&n<300){Thread.sleep(0.01);n++;} return r; },
   setText: function(label, text){ var r=null; ObjC.schedule(ObjC.mainQueue,function(){ try{r=axSetText(label, text);}catch(e){r={err:''+e};} }); var n=0; while(r===null&&n<300){Thread.sleep(0.01);n++;} return r; },
@@ -614,19 +484,14 @@ rpc.exports = {
     }
     return { ok: lk===0?1:0, locked: lk };
   },
-  tap: function(x,y){ tap(x,y); return true; },
   swipe: function(x1,y1,x2,y2,ms){ swipe(x1,y1,x2,y2,ms); return true; },
   home: function(){ ObjC.schedule(ObjC.mainQueue,function(){consumerKey(0x40);}); return true; },
   shot: function(){ var out=null; ObjC.schedule(ObjC.mainQueue,function(){ try{out=shot();}catch(e){out={err:''+e};} }); var n=0; while(out===null&&n<200){ Thread.sleep(0.01); n++; } return out; },
   // video: runs on the frida thread (off main) so the UI keeps animating while we capture
   recRun: function(dir, fps, secs, q){ return recRun(dir, fps, secs, q); },
   readFile: function(path){ return readFileB64(path); },
-  playFile: function(path, mix){ return playFile(path, mix); },
   speakUplink: function(text, lang, rate, pitch){ return speakUplink(text, lang, rate, pitch); },
   uplinkSpeaking: function(){ try { return !!(_synth && _synth.isSpeaking()); } catch(e){ return false; } },
-  chatSend: function(t){ return chatSend(t); },
-  chatType: function(t){ return chatType(t); },
-  chatReturn: function(){ return chatReturn(); },
   sslGet: function(paths){ return sslRead(paths); },
   sslSet: function(paths, on){ return sslWrite(paths, on?1:0); },
 };
