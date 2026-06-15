@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mimic-mcp"
+version = "0.1.0"
+description = "Token-efficient, human-like iOS control over MCP (Frida + go-ios)."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["mcp", "ios", "frida", "automation", "accessibility"]
+
+# The server speaks JSON-RPC over stdio directly — no MCP SDK. The only runtime
+# dependency is Frida, which controls the device over USB.
+dependencies = [
+    "frida>=16.0.0",
+]
+
+[project.scripts]
+mimic-mcp = "mimic.server:main"
+
+[tool.setuptools]
+packages = ["mimic", "mimic.ios"]
+
+[tool.setuptools.package-data]
+# Ship the injected JS alongside the Python so the controller can load it.
+"mimic.ios" = ["*.js"]

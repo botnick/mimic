@@ -1,0 +1,111 @@
+# What was tested, and where the edges are
+
+This is the honest status page. Everything below was run on hardware, not reasoned about
+in the abstract. If something is shaky or flat-out doesn't work, it's here too.
+
+## Test device
+
+| | |
+|---|---|
+| Model | iPhone 8 (iPhone10,1, A11, arm64e) |
+| iOS | 16.7.16 |
+| Jailbreak | palera1n, **rootless** (`/var/jb`) |
+| Passcode | none (required — A11 + passcode + this jailbreak risks an SEP bootloop) |
+| Link | USB, straight into the Mac (a hub drops the device) |
+| Host | macOS, stock `python3`, Homebrew `iproxy` / `ldid` |
+| frida | server 16.1.4 (arm64e, signed); matching client |
+| go-ios | v1.2.0 |
+
+## Works, and validated end to end
+
+- **Screen reading** (`mimic_look`). Returns labeled, tappable elements with coordinates.
+  A full Settings screen comes back as ~45 elements.
+- **Tap** through accessibility. Confirmed on real buttons (`UIButton` via
+  `sendActionsForControlEvents:`), navigation cells, and table/collection rows.
+- **Type** into text fields, including the recipient and body fields in Messages.
+- **Swipe / scroll** on the home screen and standard lists.
+- **Launch / list / search apps**, **screenshot**, **home / wake / unlock**,
+  **frontmost app**, **close app**.
+- **Send a text message** end to end: launch Messages → tap Compose → type the recipient
+  → type the body → tap Send → confirm the sent bubble. Done entirely through the tools.
+- **Screen video** (`mimic_record`). Frames pulled from the render server, encoded on the
+  device, assembled into an mp4. Verified producing real motion.
+- **Call with TTS to the callee** (`mimic_call`). Validated live across several numbers:
+  the callee answers, hears the spoken message over a normal cellular call, and the call
+  hangs up. The voice is whatever system voice is installed for the language (Thai ships
+  only "Kanya"); the `pitch` option can deepen or raise it.
+- **SSL pinning bypass** (`mimic_ssl`). Toggled on/off and read back; the write lands in
+  the file the tweak actually reads. With it on, a pinned app's HTTPS was decrypted
+  through a proxy and its API calls were readable.
+- **Operating a hardened, anti-frida app.** With the gadget bypass installed, a commercial
+  app that rejects a frida attach was opened, navigated, and typed into.
+- **The one-command installer** (`setup.sh`). Brought the stack up and registered the MCP;
+  re-runs cleanly.
+
+## Works, with a caveat
+
+- **Scrolling inside some apps.** The swipe is a synthetic pan. It scrolls the home screen
+  and most table views, but some in-app scroll views ignore it (the same gesture-recognizer
+  limitation that kills synthetic taps). When it matters, accessibility helps: because
+  `mimic_tap` fires by label, you can often act on an element that is below the fold
+  without scrolling to it at all.
+- **Custom-drawn controls.** A view that is not a `UIControl` and has no useful
+  accessibility action may not respond to a tap. The calculator keypad is the standard
+  example — it draws its own buttons and `accessibilityActivate()` isn't enough. This is a
+  limit of the approach, not a bug to file.
+- **Setting a Wi-Fi proxy from the tools.** Doable but fiddly — the per-network detail page
+  buries the proxy section, and the "more info" buttons are awkward to disambiguate by
+  label. For a debugging session it's faster to set the proxy by hand on the device, or
+  over SSH.
+
+## Doesn't work — and why, so you don't retry it
+
+These were each chased down properly. The point of writing them up is so the next person
+doesn't burn a day rediscovering them.
+
+- **Discrete taps via raw `IOHIDEvent`.** Pans and scrolls dispatch fine; discrete taps
+  never fire the tap gesture recognizers. Tried from SpringBoard injection and from an
+  entitled, cross-compiled touch daemon — same result every time. This is why taps go
+  through accessibility instead.
+- **WebDriverAgent.** Installs via AppSync and the developer image mounts, but launching
+  the runner fails at `house_arrest` with `InstallationLookupFailed`. Developer services
+  reject the AppSync-sideloaded container. Dead on this device.
+- **Injecting arbitrary audio into a cellular call.** The call's audio is sealed in the
+  baseband. During an active call, the software audio units render silence — measured at
+  `rms = 0.00000` on both buses even under loud speech, across two separate diagnostics.
+  Nothing in the iOS software stack carries that audio in either direction. The only thing
+  that reaches the other party is `AVSpeechSynthesizer` through `mixToTelephonyUplink`,
+  which is why `mimic_call` is text-to-speech only.
+- **Capturing what the callee says on a cellular call.** Same wall, same reason. The
+  downlink isn't in a readable software buffer. (A VoIP or FaceTime call would be a
+  different story — that audio is in software and could be captured and transcribed — but
+  that's not what `mimic_call` does.)
+- **Playing a media file during a call.** The call owns the audio session, so
+  `AVAudioPlayer` playback comes out silent. System sounds obey the physical mute switch.
+- **Hooking `mediaserverd`'s audio render to grab call audio.** Putting a frida hook on
+  that real-time thread trips the watchdog, which kills `mediaserverd` and drops
+  SpringBoard into safe mode. Don't. (Recovery is `sbreload`.)
+
+## Gotchas that bit during testing
+
+- **SpringBoard safe mode from heavy injection.** Beyond the `mediaserverd` case above,
+  running experimental native-pointer frida code *inside SpringBoard* can crash it into
+  safe mode. Keep risky native code in a throwaway process; read what you need with plain
+  Objective-C. Recovery: `sbreload` over SSH, then `touch mimic/ios/device.py` so the
+  server rebuilds its controller and reattaches.
+- **Don't `pkill ssh`.** The held SSH client is `frida-server`'s parent. Killing all SSH
+  kills frida.
+- **MCP server scope.** Registering the server at *local* scope ties it to one directory.
+  If your client doesn't see it from elsewhere, register at user scope instead.
+- **The wake-then-unlock path.** On this iOS version, the unlock call reports success but
+  can leave the lock screen up. `mimic_wake_unlock` works around it by also pressing Home
+  and re-checking the lock state until it clears — and it no-ops if the device is already
+  unlocked, so it won't yank you out of an app.
+
+## Not done
+
+- WebDriverAgent integration (dead, see above).
+- Two-way call audio (capture/transcribe the other party) — would require a VoIP/FaceTime
+  path, not cellular.
+- A bespoke no-frida introspection dylib for apps whose anti-tamper detects frida-gadget.
+- Android. Removed early and not coming back.

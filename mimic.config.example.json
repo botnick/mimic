@@ -1,0 +1,11 @@
+{
+  "_comment": "Copy to mimic.config.json (or ~/.mimic/config.json) and edit for your device. scripts/setup.sh writes this for you automatically. Every key falls back to the default shown here if the file is missing.",
+
+  "iproxy": "iproxy",
+  "frida_port": 27042,
+  "ssh_local_port": 44022,
+  "ssh_device_port": 44,
+  "ssh_pw": "alpine",
+  "jb_prefix": "/var/jb",
+  "gadget_port": 27052
+}

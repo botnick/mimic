@@ -1,0 +1,8 @@
+# Mimic MCP server — runtime dependencies.
+# Install:  python3 -m pip install -r requirements.txt
+#
+# The server speaks JSON-RPC over stdio directly, so there is no MCP SDK to install.
+# Frida is the only dependency: it controls the device over USB and pairs with the
+# frida-server running on the jailbroken iPhone.
+
+frida>=16.0.0
