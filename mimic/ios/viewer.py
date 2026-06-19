@@ -171,18 +171,25 @@ def _ic_mute(d, x, y, c):
     d.line([(x + 4, y - 7), (x + 11, y + 7)], fill=P["red"], width=2)
 
 
+def _ic_drm(d, x, y, c):  # lightning bolt = turbo (high-fps CARenderServer) capture
+    d.polygon([(x + 2, y - 9), (x - 7, y + 2), (x - 1, y + 2), (x - 3, y + 9),
+               (x + 7, y - 3), (x, y - 3)], fill=c)
+
+
 # ----------------------------------------------------------------- full UI compose
 _CHROME = {}
 RAIL_W = 94
-_COLS = {"red": P["red"], "icon": P["icon"], "accent": P["accent"], "green": P["green"]}
+_COLS = {"red": P["red"], "icon": P["icon"], "accent": P["accent"], "green": P["green"],
+         "amber": P["amber"]}
 _ICONS = {"power": _ic_power, "volup": _ic_volplus, "voldown": _ic_volminus,
-          "mute": _ic_mute, "home": _ic_home, "look": _ic_look, "boxes": _ic_boxes}
+          "mute": _ic_mute, "home": _ic_home, "look": _ic_look, "boxes": _ic_boxes,
+          "drm": _ic_drm}
 RAIL_BTNS = [("power", "LOCK", "red"), ("volup", "VOL +", "icon"), ("voldown", "VOL −", "icon"),
              ("mute", "MUTE", "icon"), ("home", "HOME", "accent"), ("look", "LOOK", "accent"),
-             ("boxes", "A11Y", "green")]
+             ("boxes", "A11Y", "green"), ("drm", "TURBO", "amber")]
 
 
-def compose(W, H, frame, *, status, conn, boxes_on, nub_hi, typebuf, fps=0, ms=0, flash=None):
+def compose(W, H, frame, *, status, conn, boxes_on, nub_hi, typebuf, fps=0, ms=0, flash=None, drm_on=False):
     img = Image.new("RGBA", (W, H), P["bg"] + (255,))
     d = ImageDraw.Draw(img)
     cy = HEADER_H // 2
@@ -227,7 +234,7 @@ def compose(W, H, frame, *, status, conn, boxes_on, nub_hi, typebuf, fps=0, ms=0
     for i, (name, label, ckey) in enumerate(RAIL_BTNS):
         by0 = y0 + i * (bh + gap)
         by1 = by0 + bh
-        lit = (name == "boxes" and boxes_on) or (flash == name)
+        lit = (name == "boxes" and boxes_on) or (name == "drm" and drm_on) or (flash == name)
         rr(d, [bx0, by0, bx1, by1], 13, fill=(_COLS[ckey] if lit else P["btn"]) + (255,))
         _ICONS[name](d, (bx0 + bx1) // 2, by0 + bh // 2 - 7, P["text"] if lit else _COLS[ckey])
         tw = d.textlength(label, font=F_BTN)
@@ -300,6 +307,36 @@ def ensure_stream_server(port=STREAM_PORT):
     return proc
 
 
+class FridaSource(threading.Thread):
+    """High-fps, DRM-bypassing capture via CARenderServer over frida (from SpringBoard).
+    Grabs the real composited display BELOW the secure layer, so it mirrors Netflix /
+    banking apps that go-ios screenshots show black — and it runs ~40-60 fps. Exposes the
+    same .latest / .connected interface as MJPEGStream so the engine can swap sources."""
+
+    def __init__(self, dev, quality=0.45):
+        super().__init__(daemon=True)
+        self.dev, self.q = dev, quality
+        self.latest, self.alive, self.connected, self.error = None, True, False, None
+
+    def run(self):
+        while self.alive:
+            try:
+                b = self.dev.frida_frame(self.q)
+                if b:
+                    self.latest = b
+                    self.connected = True
+                    time.sleep(0.006)               # ~ leave frida headroom for taps
+                else:
+                    self.connected = False
+                    time.sleep(0.1)
+            except Exception as e:  # noqa: BLE001
+                self.connected, self.error = False, str(e)
+                time.sleep(0.3)
+
+    def stop(self):
+        self.alive = False
+
+
 # ===================================================== platform-agnostic engine ====
 class Engine:
     """All the logic: stream, frida control, compositing, hit-testing. Produces a PIL
@@ -323,7 +360,10 @@ class Engine:
         self._last_frame = time.time()
         self._fid = None
         self._last_wake = 0.0
-        self.stream = MJPEGStream(STREAM_URL)
+        self.drm = True                              # default source: CARenderServer (fast + DRM-bypass)
+        self.stream = MJPEGStream(STREAM_URL)        # go-ios fallback, lazy-started
+        self.frida_src = FridaSource(self.dev)       # CARenderServer source, started in _boot
+        self.source = self.frida_src
         for fn in (self._boot, self._worker, self._render_loop, self._watchdog):
             threading.Thread(target=fn, daemon=True).start()
 
@@ -347,18 +387,17 @@ class Engine:
                 self._set("✗ %s: %s" % (name, e))
 
     def _boot(self):
-        self._set("starting stream…")
-        self._owned = ensure_stream_server()
-        self.stream.start()
         self._set("connecting frida…")
         try:
             self.dev.ensure_frida()
             try:
                 self.dev.wake_unlock()
+                self.dev.keep_awake()
             except Exception:
                 pass
+            self.frida_src.start()                   # CARenderServer (default source)
             self._look()
-            self._set("ready")
+            self._set("ready · TURBO")
         except Exception as e:  # noqa: BLE001
             self._set("frida error: %s" % e)
 
@@ -369,6 +408,24 @@ class Engine:
         self._set("look: %s · %d el" % (app, len(self.elements)))
         return app
 
+    def toggle_drm(self):
+        """Switch capture source: CARenderServer (frida, fast + DRM-bypass) <-> go-ios MJPEG."""
+        self.drm = not self.drm
+        if self.drm:
+            if not self.frida_src.is_alive():
+                self.frida_src = FridaSource(self.dev)
+                self.frida_src.start()
+            self.source = self.frida_src
+            self._set("TURBO ON · CARenderServer (fast + DRM-bypass)")
+        else:
+            if not self.stream.is_alive():
+                ensure_stream_server()
+                self.stream = MJPEGStream(STREAM_URL)
+                self.stream.start()
+            self.source = self.stream
+            self._set("TURBO OFF · go-ios MJPEG")
+        self._last_frame = time.time()
+
     # ---- render thread: heavy PIL work, as fast as frames arrive ----
     def _render_loop(self):
         last_id, last_ui, last_draw = None, None, 0.0
@@ -378,15 +435,15 @@ class Engine:
             if W < 60 or H < 60:
                 time.sleep(0.02)
                 continue
-            self.conn = ("live" if self.stream.connected
-                         else "error" if self.stream.error else "connecting")
-            cur = self.stream.latest
+            self.conn = ("live" if self.source.connected
+                         else "error" if self.source.error else "connecting")
+            cur = self.source.latest
             now = time.time()
             if cur is not None and id(cur) != self._fid:
                 self._fid = id(cur)
                 self._last_frame = now
             flash = self._flash[0] if (self._flash and now < self._flash[1]) else None
-            ui = (self.status, self._nub_hi, self.boxes, self.typebuf, self.conn, flash, W, H)
+            ui = (self.status, self._nub_hi, self.boxes, self.typebuf, self.conn, flash, self.drm, W, H)
             if id(cur) == last_id and ui == last_ui and now - last_draw < 0.2:
                 time.sleep(0.003)
                 continue
@@ -401,7 +458,8 @@ class Engine:
             try:
                 img, hit = compose(W, H, frame, status=self.status, conn=self.conn,
                                    boxes_on=self.boxes, nub_hi=self._nub_hi,
-                                   typebuf=self.typebuf, fps=self.fps, ms=self.lat_ms, flash=flash)
+                                   typebuf=self.typebuf, fps=self.fps, ms=self.lat_ms,
+                                   flash=flash, drm_on=self.drm)
                 self._hit = hit
                 self.next_pil = img
             except Exception:
@@ -423,20 +481,22 @@ class Engine:
                     self.dev.keep_awake()
                 except Exception:
                     pass
-            if self.stream.connected and now - self._last_frame > 4.0:
-                self._set("stream stalled — self-healing…")
+            if self.source.connected and now - self._last_frame > 4.0:
+                self._set("source stalled — self-healing…")
                 try:
-                    self.stream.stop()
-                    ensure_stream_server()           # kill stale + respawn fresh
-                    self.stream = MJPEGStream(STREAM_URL)
-                    self.stream.start()
-                    self._last_frame = time.time()
+                    self.dev.wake()                  # likely the display slept -> black
+                except Exception:
+                    pass
+                if not self.drm:                     # go-ios mode: respawn the stale stream
                     try:
-                        self.dev.wake()
-                    except Exception:
-                        pass
-                except Exception as e:  # noqa: BLE001
-                    self._set("heal failed: %s" % e)
+                        self.stream.stop()
+                        ensure_stream_server()
+                        self.stream = MJPEGStream(STREAM_URL)
+                        self.stream.start()
+                        self.source = self.stream
+                    except Exception as e:  # noqa: BLE001
+                        self._set("heal failed: %s" % e)
+                self._last_frame = time.time()
 
     # ---- input (TOP-LEFT window coords from the backend) ----
     def _hit_in(self, group, x, y):
@@ -470,6 +530,8 @@ class Engine:
                 self._do("look", self._look)
             elif b == "boxes":
                 self.boxes = not self.boxes
+            elif b == "drm":
+                self.toggle_drm()
             return
         f1, f2 = self._frac(sx0, sy0), self._frac(x, y)
         if f1 is None or f2 is None:

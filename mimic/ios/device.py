@@ -511,6 +511,21 @@ class IOSDevice:
     def hangup(self) -> dict:
         return self._tel().hangup()
 
+    def frida_frame(self, quality: float = 0.4) -> Optional[bytes]:
+        """One live frame via CARenderServer (SpringBoard, frida) as JPEG bytes. Captures
+        the real composited display BELOW the DRM secure layer, so it mirrors apps that
+        blank go-ios screenshots (Netflix, banking). Slower than go-ios (frida transfer)."""
+        try:
+            b64 = self._springboard().frame(float(quality))
+        except Exception:
+            return None
+        if not b64:
+            return None
+        try:
+            return base64.b64decode(b64)
+        except Exception:
+            return None
+
     def app_screenshot_b64(self) -> Optional[str]:
         ident, api = self._foreground()
         if api is None:

@@ -378,6 +378,28 @@ function rsFrameToFile(surf, path, q){
   jpg.writeToFile_atomically_(ObjC.classes.NSString.stringWithString_(path), false);
   _rs.CGImageRelease(cg); _rs.CGContextRelease(ctx);
 }
+// One live frame -> base64 JPEG, captured BELOW the DRM secure layer (so it mirrors
+// Netflix / banking apps that go-ios screenshot shows black). Reuses one surface for
+// speed; runs on the frida thread (off main) like recRun.
+var _liveSurf = null;
+function rsFrameB64(q){
+  rsInit();
+  if (!_liveSurf || _liveSurf.isNull()) _liveSurf = rsCreateSurface();
+  if (!_liveSurf || _liveSurf.isNull()) return null;
+  var surf = _liveSurf;
+  _rs.CARender(0, _rs.lcd.handle, surf, 0, 0);
+  _rs.IOSurfaceLock(surf, 1, NULL);
+  var base = _rs.IOSurfaceGetBaseAddress(surf);
+  var bpr = _rs.IOSurfaceGetBytesPerRow(surf).toInt32();
+  var ctx = _rs.CGBitmapContextCreate(base, W, H, 8, bpr, _rs.cs, 0x2002);
+  var cg = _rs.CGBitmapContextCreateImage(ctx);
+  _rs.IOSurfaceUnlock(surf, 1, NULL);
+  var ui = ObjC.classes.UIImage.imageWithCGImage_(cg);
+  var jpg = new ObjC.Object(_rs.UIImageJPEG(ui, q||0.4));
+  var b64 = jpg.base64EncodedStringWithOptions_(0).toString();
+  _rs.CGImageRelease(cg); _rs.CGContextRelease(ctx);
+  return b64;
+}
 function pad5(n){ n=''+n; while(n.length<5) n='0'+n; return n; }
 // Record `secs` seconds at `fps` into dir as fNNNNN.jpg. Runs on the frida thread
 // (not main) so the UI keeps updating and we capture live motion.
@@ -494,6 +516,7 @@ rpc.exports = {
   shot: function(){ var out=null; ObjC.schedule(ObjC.mainQueue,function(){ try{out=shot();}catch(e){out={err:''+e};} }); var n=0; while(out===null&&n<200){ Thread.sleep(0.01); n++; } return out; },
   // video: runs on the frida thread (off main) so the UI keeps animating while we capture
   recRun: function(dir, fps, secs, q){ return recRun(dir, fps, secs, q); },
+  frame: function(q){ try { return rsFrameB64(q); } catch(e){ return null; } },
   readFile: function(path){ return readFileB64(path); },
   speakUplink: function(text, lang, rate, pitch){ return speakUplink(text, lang, rate, pitch); },
   uplinkSpeaking: function(){ try { return !!(_synth && _synth.isSpeaking()); } catch(e){ return false; } },
