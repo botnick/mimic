@@ -18,9 +18,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The live screen viewer (mimic/ios/viewer.py) renders the device frame with Pillow.
-# The MCP server itself stays Frida-only — install this extra only for the viewer.
-viewer = ["pillow>=9.2"]
+# The live screen viewer (mimic/ios/viewer.py) is a native macOS Cocoa window built
+# with Pillow + PyObjC. The MCP server itself stays Frida-only — install this extra
+# only for the viewer. (macOS ships a broken system Tk 8.5, so the viewer uses AppKit.)
+viewer = ["pillow>=9.2", "pyobjc-framework-Cocoa>=9.0; sys_platform == 'darwin'"]
 
 [project.scripts]
 mimic-mcp = "mimic.server:main"
@@ -30,5 +31,5 @@ mimic-viewer = "mimic.ios.viewer:main"
 packages = ["mimic", "mimic.ios"]
 
 [tool.setuptools.package-data]
-# Ship the injected JS alongside the Python so the controller can load it.
-"mimic.ios" = ["*.js"]
+# Ship the injected JS + viewer app icon alongside the Python.
+"mimic.ios" = ["*.js", "*.png"]

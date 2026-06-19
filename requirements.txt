@@ -7,6 +7,7 @@
 
 frida>=16.0.0
 
-# Optional — only for the live screen viewer (`python3 -m mimic.ios.viewer`):
-#   pip install pillow>=9.2
+# Optional — only for the live screen viewer (`python3 -m mimic.ios.viewer`).
+# It's a native macOS Cocoa window (the system Tk 8.5 is broken on modern macOS):
+#   pip install pillow pyobjc-framework-Cocoa
 

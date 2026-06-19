@@ -220,12 +220,15 @@ inspection. It works by reading/writing the tweak's own prefs file
 
 ## Live screen viewer (desktop window)
 
-To watch the phone in real time and click it like scrcpy, there is a native Tk window
-(no browser):
+To watch the phone in real time and click it like scrcpy, there is a native macOS
+window (Cocoa/AppKit — no browser; macOS ships a broken Tk 8.5 so we use AppKit). It
+shows live FPS + frame latency in the header:
 
 ```bash
-python3 -m mimic.ios.viewer      # needs Pillow:  pip install pillow
+python3 -m mimic.ios.viewer      # needs:  pip install pillow pyobjc-framework-Cocoa
 ```
+
+There is also a double-clickable `Mimic.app` (built by `scripts/build_app.sh`).
 
 It mirrors the screen over USB via go-ios' MJPEG stream and renders a premium device
 frame (rounded screen, clickable side buttons). Controls reuse the SAME proven model as

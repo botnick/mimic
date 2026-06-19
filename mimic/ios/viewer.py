@@ -1,29 +1,26 @@
 #!/usr/bin/env python3
-"""Mimic iOS live viewer — a premium, scrcpy-style native window for the iPhone.
+"""Mimic iOS live viewer — a premium, scrcpy-style NATIVE window for the iPhone.
 
-A native Tk window (no browser) that mirrors the jailbroken device LIVE over USB and
-drives it, reusing the proven control model in mimic/ios/device.py:
+A native macOS (Cocoa / AppKit) window — no browser — that mirrors the jailbroken
+device LIVE over USB and drives it, reusing the proven control model in
+mimic/ios/device.py:
 
     * live screen   : go-ios MJPEG stream (full-res JPEG frames over the USB DVT channel)
     * click          : nearest accessibility element from look() -> tap_label()
     * drag           : swipe() (pixel coords)
     * side buttons   : clickable nubs on the device frame -> button() (Consumer-HID)
-    * rail buttons   : Lock / Vol+ / Vol- / Mute / Home / Look / A11y
-    * text           : type_text() into the focused field
+    * header buttons : Home / Look / A11y
+    * type           : just type while the window is focused; Enter sends -> type_text()
 
-The phone — body, rounded screen, side buttons, earpiece — is composited with PIL into
-one image, so it looks like a real device and avoids Tk's inability to style native
-buttons on macOS. The static chrome is cached per window size; only the screen is pasted
-per frame.
+The whole window — device body, rounded screen, side buttons, header — is composited with
+Pillow into one image per frame and drawn into a single NSView; mouse clicks are hit-tested
+against that layout. We use AppKit instead of Tkinter because macOS ships a broken Tk 8.5
+with the system Python (blank windows / frozen event loop); Cocoa's run loop is solid.
 
 Why click->nearest-label and not a raw pixel touch: discrete IOHIDEvent taps do not fire
 gesture recognizers on this device (see device.py), so taps go through the a11y tree.
-Custom-drawn views with no a11y element (games, the calculator keypad) are the known wall.
-Scrolling/dragging uses synthetic touch, which does work; hardware keys use Consumer-HID.
 
-Run:
-    python3 -m mimic.ios.viewer
-    python3 mimic/ios/viewer.py
+Run:  python3 -m mimic.ios.viewer      (needs: pip install pyobjc-framework-Cocoa pillow)
 """
 from __future__ import annotations
 
@@ -35,116 +32,191 @@ import subprocess
 import sys
 import threading
 import time
-import tkinter as tk
-import tkinter.font as tkfont
 from urllib.request import urlopen
 
-from PIL import Image, ImageDraw, ImageFilter, ImageTk
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
+
+import objc
+from Foundation import NSData, NSObject, NSMakeRect, NSTimer
+from AppKit import (
+    NSApplication, NSWindow, NSView, NSImage, NSColor, NSApp,
+    NSBackingStoreBuffered, NSWindowStyleMaskTitled, NSWindowStyleMaskClosable,
+    NSWindowStyleMaskResizable, NSWindowStyleMaskMiniaturizable,
+    NSApplicationActivationPolicyRegular, NSCompositingOperationCopy,
+    NSBitmapImageRep, NSCalibratedRGBColorSpace,
+)
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from mimic.ios.device import IOSDevice, GOIOS  # noqa: E402
 
-SCREEN_PTS = (375, 667)        # look() element centres are in POINTS
-SCREEN_PX = (750, 1334)        # swipe() takes PIXELS
+SCREEN_PTS = (375, 667)
+SCREEN_PX = (750, 1334)
 STREAM_PORT = 3333
 STREAM_URL = "http://127.0.0.1:%d/" % STREAM_PORT
+HEADER_H = 46
 
 P = {
-    "bg": "#0a0b0f", "body": "#0e0f15", "body_edge": "#3a3f4b", "bevel": "#20242e",
-    "screen_bg": "#000000", "nub": "#171a21", "nub_edge": "#333845",
-    "panel": "#121420", "btn": "#1c1f2b", "btn_h": "#262a39", "btn_a": "#333a4f",
-    "accent": "#0a84ff", "accent_h": "#3a9bff", "green": "#30d158",
-    "amber": "#ff9f0a", "red": "#ff453a", "text": "#f2f3f7", "dim": "#878d9e",
-    "icon": "#d6dae6",
+    "bg": (10, 11, 15), "panel": (18, 20, 32), "body": (14, 15, 21),
+    "body_edge": (58, 63, 75), "bevel": (32, 36, 46), "screen_bg": (0, 0, 0),
+    "nub": (23, 26, 33), "nub_edge": (51, 56, 69), "btn": (28, 31, 43),
+    "btn_on": (10, 132, 255), "accent": (10, 132, 255), "green": (48, 209, 88),
+    "amber": (255, 159, 10), "red": (255, 69, 58), "text": (242, 243, 247),
+    "dim": (135, 141, 158), "icon": (214, 218, 230),
 }
 
 
-def _h(c):
-    c = c.lstrip("#")
-    return (int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16))
+def _font(size, bold=False):
+    paths = (["/System/Library/Fonts/SFNSDisplay.ttf", "/System/Library/Fonts/SFNS.ttf",
+              "/Library/Fonts/Arial Bold.ttf", "/System/Library/Fonts/Supplemental/Arial Bold.ttf"]
+             if bold else
+             ["/System/Library/Fonts/SFNS.ttf", "/Library/Fonts/Arial.ttf",
+              "/System/Library/Fonts/Supplemental/Arial.ttf", "/System/Library/Fonts/Helvetica.ttc"])
+    for p in paths:
+        try:
+            return ImageFont.truetype(p, size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
 
 
-def _pick_font(prefs):
-    fams = set(tkfont.families())
-    for p in prefs:
-        if p in fams:
-            return p
-    return prefs[-1]
+F_TITLE, F_BTN, F_MONO = _font(17, True), _font(10, True), _font(11)
 
 
-def round_rect(cv, x1, y1, x2, y2, r, **kw):
-    pts = [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y2 - r, x2, y2,
-           x2 - r, y2, x1 + r, y2, x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
-    return cv.create_polygon(pts, smooth=True, **kw)
+def rr(d, box, radius, **kw):
+    d.rounded_rectangle(box, radius=radius, **kw)
 
 
 # ============================================================== device-frame render
 def build_chrome(W, H):
-    """Build the static device chrome (body, screen recess, side buttons, earpiece)
-    once per window size. Returns (chrome RGBA, geom dict, rounded screen mask)."""
     sw0, sh0 = SCREEN_PX
     bez = 0.035 * sw0
     pw0, ph0 = sw0 + 2 * bez, sh0 + 2 * bez
-    pad = 20
-    scale = min((W - 2 * pad) / pw0, (H - 2 * pad) / (ph0 * 1.06))
-    PW, PH = int(pw0 * scale), int(ph0 * scale)
-    SW, SH = int(sw0 * scale), int(sh0 * scale)
+    pad = 16
+    scale = min((W - 2 * pad) / pw0, (H - 2 * pad) / (ph0 * 1.04))
+    PW, PH = max(1, int(pw0 * scale)), max(1, int(ph0 * scale))
+    SW, SH = max(1, int(sw0 * scale)), max(1, int(sh0 * scale))
     b = int(bez * scale)
     body_r = int(PW * 0.11)
     scr_r = max(6, body_r - b)
     px, py = (W - PW) // 2, (H - PH) // 2
     sx, sy = px + b, py + b
 
-    img = Image.new("RGBA", (W, H), _h(P["bg"]) + (255,))
-
-    # soft drop shadow
+    img = Image.new("RGBA", (W, H), P["bg"] + (255,))
     sh = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    ImageDraw.Draw(sh).rounded_rectangle(
-        [px, py + int(PH * 0.03), px + PW, py + PH + int(PH * 0.03)],
-        radius=body_r, fill=(0, 0, 0, 160))
+    ImageDraw.Draw(sh).rounded_rectangle([px, py + int(PH * 0.03), px + PW, py + PH + int(PH * 0.03)],
+                                         radius=body_r, fill=(0, 0, 0, 150))
     img.alpha_composite(sh.filter(ImageFilter.GaussianBlur(max(6, int(PW * 0.05)))))
-
     d = ImageDraw.Draw(img)
 
-    # side buttons (drawn before the body so they read as protruding)
     nub_w = max(3, int(b * 0.46))
     nubs = {}
 
-    def nub(name, side, cy_frac, len_frac):
-        ln = int(SH * len_frac)
-        cy = py + b + int(SH * cy_frac)
+    def nub(name, side, cyf, lf):
+        ln = int(SH * lf)
+        cy = py + b + int(SH * cyf)
         if side == "L":
             x1, x2 = px - nub_w, px + int(b * 0.4)
         else:
             x1, x2 = px + PW - int(b * 0.4), px + PW + nub_w
-        d.rounded_rectangle([x1, cy, x2, cy + ln], radius=nub_w,
-                            fill=_h(P["nub"]) + (255,), outline=_h(P["nub_edge"]) + (255,), width=1)
-        nubs[name] = (min(x1, x2) - 4, cy - 3, max(x1, x2) + 4, cy + ln + 3)  # padded hit box
+        rr(d, [x1, cy, x2, cy + ln], nub_w, fill=P["nub"] + (255,), outline=P["nub_edge"] + (255,), width=1)
+        nubs[name] = (min(x1, x2) - 4, cy - 3, max(x1, x2) + 4, cy + ln + 3)
 
     nub("power", "R", 0.17, 0.13)
     nub("mute", "L", 0.10, 0.05)
     nub("volup", "L", 0.205, 0.11)
     nub("voldown", "L", 0.345, 0.11)
 
-    # body + subtle inner bevel
-    d.rounded_rectangle([px, py, px + PW, py + PH], radius=body_r,
-                        fill=_h(P["body"]) + (255,), outline=_h(P["body_edge"]) + (255,), width=2)
-    d.rounded_rectangle([px + 2, py + 2, px + PW - 2, py + PH - 2], radius=body_r - 2,
-                        outline=_h(P["bevel"]) + (150,), width=1)
-    # screen recess
-    d.rounded_rectangle([sx, sy, sx + SW, sy + SH], radius=scr_r, fill=_h(P["screen_bg"]) + (255,))
-    # earpiece slit + camera dot
+    rr(d, [px, py, px + PW, py + PH], body_r, fill=P["body"] + (255,), outline=P["body_edge"] + (255,), width=2)
+    rr(d, [px + 2, py + 2, px + PW - 2, py + PH - 2], body_r - 2, outline=P["bevel"] + (150,), width=1)
+    rr(d, [sx, sy, sx + SW, sy + SH], scr_r, fill=P["screen_bg"] + (255,))
     slit_w, slit_h = int(SW * 0.16), max(3, int(b * 0.22))
     slx, sly = px + (PW - slit_w) // 2, py + (b - slit_h) // 2
-    d.rounded_rectangle([slx, sly, slx + slit_w, sly + slit_h], radius=slit_h // 2, fill=(40, 44, 54, 255))
+    rr(d, [slx, sly, slx + slit_w, sly + slit_h], slit_h // 2, fill=(40, 44, 54, 255))
     cam = max(2, int(b * 0.13))
     d.ellipse([slx + slit_w + int(b * 0.45), sly, slx + slit_w + int(b * 0.45) + cam, sly + cam],
               fill=(28, 32, 40, 255))
 
     mask = Image.new("L", (SW, SH), 0)
     ImageDraw.Draw(mask).rounded_rectangle([0, 0, SW, SH], radius=scr_r, fill=255)
-    geom = {"phone": (px, py, PW, PH), "screen": (sx, sy, SW, SH), "nubs": nubs}
-    return img, geom, mask
+    return img, {"screen": (sx, sy, SW, SH), "nubs": nubs}, mask
+
+
+# ---------------------------------------------------------------- PIL button icons
+def _ic_power(d, x, y, c):
+    d.arc([x - 8, y - 8, x + 8, y + 8], 290, 250, fill=c, width=2)
+    d.line([x, y - 10, x, y - 1], fill=c, width=2)
+
+
+def _ic_home(d, x, y, c):
+    d.ellipse([x - 8, y - 8, x + 8, y + 8], outline=c, width=2)
+    rr(d, [x - 3, y - 3, x + 3, y + 3], 1, outline=c, width=2)
+
+
+def _ic_look(d, x, y, c):
+    d.arc([x - 8, y - 8, x + 8, y + 8], -40, 210, fill=c, width=2)
+    d.polygon([x + 8, y - 9, x + 11, y - 2, x + 3, y - 3], fill=c)
+
+
+def _ic_boxes(d, x, y, c):
+    for dx, dy in ((-7, -7), (1, -7), (-7, 1), (1, 1)):
+        rr(d, [x + dx, y + dy, x + dx + 6, y + dy + 6], 1, outline=c, width=2)
+
+
+# ----------------------------------------------------------------- full UI compose
+_CHROME = {}  # cache the heavy device chrome (shadow/blur) per window size
+
+
+def compose(W, H, frame, *, status, conn, boxes_on, nub_hi, typebuf, fps=0, ms=0):
+    img = Image.new("RGBA", (W, H), P["bg"] + (255,))
+    d = ImageDraw.Draw(img)
+    # header
+    cy = HEADER_H // 2
+    d.rectangle([0, 0, W, HEADER_H], fill=P["panel"] + (255,))
+    cc = {"live": P["green"], "connecting": P["amber"], "error": P["red"]}[conn]
+    d.ellipse([16, cy - 5, 26, cy + 5], fill=cc + (255,))
+    d.text((36, cy - 10), "Mimic", font=F_TITLE, fill=P["text"] + (255,))
+    d.text((110, cy - 7), "%d fps · %d ms" % (fps, ms), font=F_MONO, fill=P["green"] + (255,))
+    msg = typebuf and ("⌨ " + typebuf) or status
+    d.text((220, cy - 7), msg[:28], font=F_MONO, fill=(P["accent"] if typebuf else P["dim"]) + (255,))
+
+    # header buttons (right): Home, Look, A11y
+    btns = {}
+    bw, bh, gap = 40, 30, 8
+    defs = [("home", _ic_home, P["accent"]), ("look", _ic_look, P["accent"]),
+            ("boxes", _ic_boxes, P["green"] if boxes_on else P["icon"])]
+    bx = W - len(defs) * (bw + gap) - 6
+    for name, icon, col in defs:
+        fill = P["btn_on"] if (name == "boxes" and boxes_on) else P["btn"]
+        rr(d, [bx, 8, bx + bw, 8 + bh], 9, fill=fill + (255,))
+        icon(d, bx + bw // 2, 8 + bh // 2, (P["text"] if (name == "boxes" and boxes_on) else col))
+        btns[name] = (bx, 8, bx + bw, 8 + bh)
+        bx += bw + gap
+
+    # phone stage below header — build_chrome is heavy (GaussianBlur), so cache + copy
+    sw, sh = W, H - HEADER_H
+    cached = _CHROME.get((sw, sh))
+    if cached is None:
+        cached = _CHROME[(sw, sh)] = build_chrome(sw, sh)
+    base, geom, mask = cached
+    chrome = base.copy()
+    sx, sy, SW, SH = geom["screen"]
+    if frame is not None:
+        try:
+            chrome.paste(frame.resize((SW, SH), Image.BILINEAR), (sx, sy), mask)
+        except Exception:
+            pass
+    if nub_hi and nub_hi in geom["nubs"]:
+        x1, y1, x2, y2 = geom["nubs"][nub_hi]
+        ImageDraw.Draw(chrome).rounded_rectangle([x1 + 4, y1 + 3, x2 - 4, y2 - 3], radius=4,
+                                                 outline=P["accent"] + (255,), width=2)
+    img.alpha_composite(chrome, (0, HEADER_H))
+
+    # hitmap in window coords
+    off = HEADER_H
+    hit = {"screen": (sx, sy + off, SW, SH),
+           "nubs": {k: (v[0], v[1] + off, v[2], v[3] + off) for k, v in geom["nubs"].items()},
+           "buttons": btns}
+    return img, hit
 
 
 # --------------------------------------------------------------------------- MJPEG
@@ -199,312 +271,233 @@ def ensure_stream_server(port=STREAM_PORT):
     return proc
 
 
-# ---------------------------------------------------------------- vector icon glyphs
-def icon_power(cv, x, y, c):
-    cv.create_arc(x - 9, y - 9, x + 9, y + 9, start=72, extent=-324, style="arc", outline=c, width=2)
-    cv.create_line(x, y - 11, x, y - 1, fill=c, width=2, capstyle="round")
+def pil_to_nsimage(pil):
+    # write raw RGBA straight into an NSBitmapImageRep — ~13x faster than PNG-encoding
+    pil = pil.convert("RGBA")
+    w, h = pil.size
+    raw = pil.tobytes()
+    rep = NSBitmapImageRep.alloc().initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bytesPerRow_bitsPerPixel_(
+        None, w, h, 8, 4, True, False, NSCalibratedRGBColorSpace, w * 4, 32)
+    rep.bitmapData()[:] = raw
+    img = NSImage.alloc().initWithSize_((w, h))
+    img.addRepresentation_(rep)
+    return img
 
 
-def icon_plus(cv, x, y, c):
-    cv.create_line(x - 7, y, x + 7, y, fill=c, width=2, capstyle="round")
-    cv.create_line(x, y - 7, x, y + 7, fill=c, width=2, capstyle="round")
+# ------------------------------------------------------------------- AppKit window
+def _point(view, ev):
+    # view is NOT flipped (default bottom-left origin) so the NSImage draws upright;
+    # convert the click to the top-left coords our PIL hitmap uses.
+    p = view.convertPoint_fromView_(ev.locationInWindow(), None)
+    return (p.x, view.bounds().size.height - p.y)
 
 
-def icon_minus(cv, x, y, c):
-    cv.create_line(x - 7, y, x + 7, y, fill=c, width=2, capstyle="round")
+class MimicView(NSView):
+    def initWithCtl_(self, ctl):
+        self = objc.super(MimicView, self).initWithFrame_(NSMakeRect(0, 0, 486, 900))
+        self._ctl = ctl
+        self._img = None
+        return self
+
+    def isFlipped(self):
+        return False
+
+    def acceptsFirstResponder(self):
+        return True
+
+    def setImage_(self, nsimg):
+        self._img = nsimg
+        self.setNeedsDisplay_(True)
+
+    def drawRect_(self, rect):
+        from AppKit import NSRectFill
+        NSColor.colorWithCalibratedRed_green_blue_alpha_(0.04, 0.043, 0.06, 1.0).set()
+        NSRectFill(self.bounds())
+        if self._img is not None:
+            self._img.drawInRect_fromRect_operation_fraction_(
+                self.bounds(), NSMakeRect(0, 0, 0, 0), NSCompositingOperationCopy, 1.0)
+
+    def mouseDown_(self, ev):
+        self._ctl.on_down(*_point(self, ev))
+
+    def mouseUp_(self, ev):
+        self._ctl.on_up(*_point(self, ev))
+
+    def keyDown_(self, ev):
+        self._ctl.on_key(ev.characters())
 
 
-def icon_mute(cv, x, y, c):
-    cv.create_polygon(x - 8, y - 3, x - 4, y - 3, x, y - 7, x, y + 7, x - 4, y + 3, x - 8, y + 3,
-                      fill=c, outline=c)
-    cv.create_line(x + 2, y - 7, x + 9, y + 7, fill=P["red"], width=2, capstyle="round")
+class _Timer(NSObject):
+    def initWithCtl_(self, ctl):
+        self = objc.super(_Timer, self).init()
+        self._ctl = ctl
+        return self
+
+    def tick_(self, timer):
+        try:
+            self._ctl.tick()
+        except Exception:
+            pass
 
 
-def icon_home(cv, x, y, c):
-    cv.create_oval(x - 8, y - 8, x + 8, y + 8, outline=c, width=2)
-    cv.create_rectangle(x - 3, y - 3, x + 3, y + 3, outline=c, width=2)
-
-
-def icon_look(cv, x, y, c):
-    cv.create_arc(x - 8, y - 8, x + 8, y + 8, start=40, extent=290, style="arc", outline=c, width=2)
-    cv.create_polygon(x + 7, y - 9, x + 11, y - 3, x + 3, y - 4, fill=c, outline=c)
-
-
-def icon_boxes(cv, x, y, c):
-    for dx, dy in ((-8, -8), (1, -8), (-8, 1), (1, 1)):
-        cv.create_rectangle(x + dx, y + dy, x + dx + 7, y + dy + 7, outline=c, width=2)
-
-
-# ------------------------------------------------------------------- rail icon button
-class IconButton(tk.Canvas):
-    def __init__(self, parent, label, command, icon, w=72, h=56,
-                 accent=None, toggle=False, font="Helvetica"):
-        super().__init__(parent, width=w, height=h, bg=P["panel"],
-                         highlightthickness=0, bd=0, cursor="pointinghand")
-        self.cmd, self.icon, self.label = command, icon, label
-        self.w, self.h, self.accent, self.font = w, h, accent, font
-        self.toggle, self.on, self._st = toggle, False, "base"
-        self.bind("<Enter>", lambda e: self._set("hover"))
-        self.bind("<Leave>", lambda e: self._set("base"))
-        self.bind("<ButtonPress-1>", lambda e: self._set("active"))
-        self.bind("<ButtonRelease-1>", self._release)
-        self._render()
-
-    def _set(self, s):
-        self._st = s
-        self._render()
-
-    def _release(self, ev):
-        inside = 0 <= ev.x <= self.w and 0 <= ev.y <= self.h
-        self._set("hover" if inside else "base")
-        if inside and self.cmd:
-            if self.toggle:
-                self.on = not self.on
-            self.cmd()
-
-    def _render(self):
-        self.delete("all")
-        fill = (self.accent or P["accent"]) if (self.toggle and self.on) else \
-            {"base": P["btn"], "hover": P["btn_h"], "active": P["btn_a"]}[self._st]
-        round_rect(self, 3, 3, self.w - 3, self.h - 3, 15, fill=fill, outline="")
-        col = P["text"] if (self.toggle and self.on) else (self.accent or P["icon"])
-        self.icon(self, self.w / 2, self.h / 2 - 6, col)
-        self.create_text(self.w / 2, self.h - 11, text=self.label,
-                         fill=P["text"] if (self.toggle and self.on) else P["dim"],
-                         font=(self.font, 9, "bold"))
-
-
-# ----------------------------------------------------------------------------- app
-class Viewer(tk.Tk):
+class Controller:
     def __init__(self):
-        super().__init__()
-        self.title("Mimic")
-        self.configure(bg=P["bg"])
-        self.geometry("486x940")
-        self.minsize(400, 720)
-        self.F = _pick_font(["SF Pro Text", "SF Pro Display", "Helvetica Neue", "Helvetica"])
-        self.FM = _pick_font(["SF Mono", "Menlo", "Monaco", "Courier"])
-
         self.dev = IOSDevice()
-        self.elements, self.show_boxes = [], False
-        self._statusq, self._jobs = queue.Queue(), queue.Queue()
-        self._conn = "connecting"
-        self._chrome = self._geom = self._mask = None
-        self._stage_size = (0, 0)
+        self.elements, self.boxes = [], False
+        self.status, self.conn = "starting…", "connecting"
+        self.typebuf = ""
+        self._jobs = queue.Queue()
         self._press = None
         self._nub_hi = None
-        self._tkimg = None
+        self._hit = None
         self._owned = None
-
-        self._build_ui()
-        # everything that can block goes on threads so the window paints immediately
+        self.view = None
         self.stream = MJPEGStream(STREAM_URL)
+        self._wh = (0, 0)
+        self._next_img = None
+        self.fps, self.lat_ms = 0, 0
         threading.Thread(target=self._boot, daemon=True).start()
         threading.Thread(target=self._worker, daemon=True).start()
-        self.after(33, self._tick)
-        self.protocol("WM_DELETE_WINDOW", self._close)
+        threading.Thread(target=self._render_loop, daemon=True).start()
 
-    # ------------------------------------------------------------------- ui build
-    def _build_ui(self):
-        head = tk.Frame(self, bg=P["panel"], height=50)
-        head.pack(side="top", fill="x")
-        head.pack_propagate(False)
-        self._dotcv = tk.Canvas(head, width=12, height=12, bg=P["panel"], highlightthickness=0)
-        self._dotcv.pack(side="left", padx=(16, 8))
-        self._dot = self._dotcv.create_oval(2, 2, 10, 10, fill=P["amber"], outline="")
-        tk.Label(head, text="Mimic", bg=P["panel"], fg=P["text"],
-                 font=(self.F, 16, "bold")).pack(side="left")
-        self.pill = tk.Canvas(head, width=86, height=24, bg=P["panel"], highlightthickness=0)
-        self.pill.pack(side="right", padx=14)
+    # ---- worker plumbing ----
+    def _set(self, s):
+        self.status = s
 
-        body = tk.Frame(self, bg=P["bg"])
-        body.pack(side="top", fill="both", expand=True)
-
-        rail = tk.Frame(body, bg=P["panel"], width=92)
-        rail.pack(side="right", fill="y")
-        rail.pack_propagate(False)
-        tk.Frame(rail, bg=P["panel"], height=6).pack()
-        rail_defs = [
-            ("LOCK", lambda: self._btn("power"), icon_power, P["red"], False),
-            ("VOL", lambda: self._btn("volup"), icon_plus, None, False),
-            ("VOL", lambda: self._btn("voldown"), icon_minus, None, False),
-            ("MUTE", lambda: self._btn("mute"), icon_mute, None, False),
-            ("HOME", lambda: self._do("home", self.dev.home), icon_home, P["accent"], False),
-            ("LOOK", lambda: self._do("look", self._look), icon_look, P["accent"], False),
-        ]
-        for label, cmd, icon, acc, tog in rail_defs:
-            IconButton(rail, label, cmd, icon, accent=acc, font=self.F).pack(pady=4, padx=10)
-        self._boxes_btn = IconButton(rail, "A11Y", self._toggle_boxes, icon_boxes,
-                                     accent=P["green"], toggle=True, font=self.F)
-        self._boxes_btn.pack(pady=4, padx=10)
-
-        self.stage = tk.Canvas(body, bg=P["bg"], highlightthickness=0)
-        self.stage.pack(side="left", fill="both", expand=True)
-        self.stage.bind("<ButtonPress-1>", self._press_stage)
-        self.stage.bind("<ButtonRelease-1>", self._release_stage)
-
-        bar = tk.Frame(self, bg=P["panel"], height=56)
-        bar.pack(side="bottom", fill="x")
-        bar.pack_propagate(False)
-        wrap = tk.Frame(bar, bg=P["btn"])
-        wrap.pack(side="left", fill="x", expand=True, padx=(14, 8), pady=10)
-        self.entry = tk.Entry(wrap, bg=P["btn"], fg=P["text"], insertbackground=P["accent"],
-                              relief="flat", font=(self.F, 13))
-        self.entry.pack(side="left", fill="x", expand=True, padx=12, pady=7)
-        self.entry.bind("<Return>", lambda e: self._send_text())
-        send = tk.Canvas(bar, width=56, height=34, bg=P["panel"], highlightthickness=0,
-                         cursor="pointinghand")
-        send.pack(side="right", padx=(0, 14))
-        round_rect(send, 1, 1, 55, 33, 12, fill=P["accent"], outline="")
-        send.create_text(28, 17, text="Type", fill="white", font=(self.F, 12, "bold"))
-        send.bind("<Button-1>", lambda e: self._send_text())
-
-        self.status = tk.Label(self, text="starting…", anchor="w", bg=P["bg"], fg=P["dim"],
-                               font=(self.FM, 10))
-        self.status.pack(side="bottom", fill="x", padx=14, pady=(0, 4))
-        self._paint_pill()
-
-    # --------------------------------------------------------------- status helpers
-    def _set_status(self, s):
-        self._statusq.put(s)
-
-    def _paint_pill(self):
-        c = {"live": P["green"], "connecting": P["amber"], "error": P["red"]}[self._conn]
-        txt = {"live": "● live", "connecting": "● link…", "error": "● off"}[self._conn]
-        self.pill.delete("all")
-        round_rect(self.pill, 1, 1, 84, 22, 11, fill=P["btn"], outline="")
-        self.pill.create_text(43, 12, text=txt, fill=c, font=(self.F, 11, "bold"))
-        self._dotcv.itemconfig(self._dot, fill=c)
-
-    # ------------------------------------------------------------- worker plumbing
     def _do(self, name, fn):
         self._jobs.put((name, fn))
-
-    def _btn(self, name):
-        self._do(name, lambda: self.dev.button(name))
 
     def _worker(self):
         while True:
             name, fn = self._jobs.get()
             try:
                 r = fn()
-                self._set_status("%s · %s" % (name, r if isinstance(r, (str, dict)) else "ok"))
+                self._set("%s · %s" % (name, r if isinstance(r, (str, dict)) else "ok"))
             except Exception as e:  # noqa: BLE001
-                self._set_status("✗ %s: %s" % (name, e))
+                self._set("✗ %s: %s" % (name, e))
 
     def _boot(self):
-        self._set_status("starting stream…")
+        self._set("starting stream…")
         self._owned = ensure_stream_server()
         self.stream.start()
-        self._set_status("connecting frida…")
+        self._set("connecting frida…")
         try:
             self.dev.ensure_frida()
             self._look()
-            self._set_status("ready")
+            self._set("ready")
         except Exception as e:  # noqa: BLE001
-            self._set_status("frida error: %s" % e)
+            self._set("frida error: %s" % e)
 
     def _look(self):
         r = self.dev.look()
         self.elements = r.get("elements", []) if isinstance(r, dict) else []
         app = r.get("app") if isinstance(r, dict) else "?"
-        self._set_status("look: %s · %d elements" % (app, len(self.elements)))
+        self._set("look: %s · %d el" % (app, len(self.elements)))
         return app
 
-    def _toggle_boxes(self):
-        self.show_boxes = self._boxes_btn.on
-
-    def _send_text(self):
-        t = self.entry.get()
-        if not t:
+    # ---- main-thread timer: stays CHEAP so clicks are instant ----
+    def tick(self):
+        if self.view is None:
             return
-        self.entry.delete(0, "end")
-        self._do("type", lambda: (self.dev.type_text(t), time.sleep(0.2), self._look())[0])
+        b = self.view.bounds()
+        self._wh = (int(b.size.width), int(b.size.height))
+        img = self._next_img
+        if img is not None:
+            self._next_img = None
+            self.view.setImage_(img)
 
-    # --------------------------------------------------------------- render loop
-    def _tick(self):
-        try:
-            while True:
-                self.status.config(text=self._statusq.get_nowait())
-        except queue.Empty:
-            pass
-        new_conn = "live" if self.stream.connected else ("error" if self.stream.error else "connecting")
-        if new_conn != self._conn:
-            self._conn = new_conn
-            self._paint_pill()
-
-        cw, ch = self.stage.winfo_width(), self.stage.winfo_height()
-        if cw > 8 and ch > 8:
-            if (cw, ch) != self._stage_size:
-                self._stage_size = (cw, ch)
-                self._chrome, self._geom, self._mask = build_chrome(cw, ch)
-            self._render()
-        self.after(33, self._tick)
-
-    def _render(self):
-        img = self._chrome.copy()
-        sx, sy, SW, SH = self._geom["screen"]
-        if self.stream.latest:
+    # ---- background render thread: heavy PIL/NSImage work, as fast as frames arrive ----
+    def _render_loop(self):
+        last_id, last_ui, last_draw = None, None, 0.0
+        cnt, t_fps = 0, time.time()
+        while True:
+            W, H = self._wh
+            if W < 40 or H < 40:
+                time.sleep(0.02)
+                continue
+            self.conn = ("live" if self.stream.connected
+                         else "error" if self.stream.error else "connecting")
+            cur = self.stream.latest
+            now = time.time()
+            ui = (self.status, self._nub_hi, self.boxes, self.typebuf, self.conn)
+            if id(cur) == last_id and ui == last_ui and now - last_draw < 0.3:
+                time.sleep(0.003)                   # idle: nothing new to draw
+                continue
+            last_id, last_ui, last_draw = id(cur), ui, now
+            t0 = time.time()
+            frame = None
+            if cur is not None:
+                try:
+                    frame = Image.open(io.BytesIO(cur)).convert("RGB")
+                except Exception:
+                    frame = None
             try:
-                fr = Image.open(io.BytesIO(self.stream.latest)).convert("RGB").resize((SW, SH))
-                if self.show_boxes and self.elements:
-                    self._overlay(fr)
-                img.paste(fr, (sx, sy), self._mask)
+                img, hit = compose(W, H, frame, status=self.status, conn=self.conn,
+                                   boxes_on=self.boxes, nub_hi=self._nub_hi,
+                                   typebuf=self.typebuf, fps=self.fps, ms=self.lat_ms)
+                self._hit = hit
+                self._next_img = pil_to_nsimage(img)
             except Exception:
-                pass
-        if self._nub_hi and self._nub_hi in self._geom["nubs"]:
-            x1, y1, x2, y2 = self._geom["nubs"][self._nub_hi]
-            ImageDraw.Draw(img).rounded_rectangle([x1 + 4, y1 + 3, x2 - 4, y2 - 3],
-                                                  radius=4, outline=_h(P["accent"]) + (255,), width=2)
-        self._tkimg = ImageTk.PhotoImage(img)
-        self.stage.delete("all")
-        self.stage.create_image(0, 0, anchor="nw", image=self._tkimg)
+                continue
+            self.lat_ms = int(self.lat_ms * 0.7 + (time.time() - t0) * 1000 * 0.3)
+            cnt += 1
+            if now - t_fps >= 0.5:
+                self.fps = int(round(cnt / (now - t_fps)))
+                cnt, t_fps = 0, now
 
-    def _overlay(self, img):
-        d = ImageDraw.Draw(img)
-        iw, ih = img.size
-        kx, ky = iw / SCREEN_PTS[0], ih / SCREEN_PTS[1]
-        for e in self.elements:
-            x, y = (e.get("x") or 0) * kx, (e.get("y") or 0) * ky
-            d.ellipse([x - 5, y - 5, x + 5, y + 5], outline=P["green"], width=2)
+    # ---- input ----
+    def _btn(self, name):
+        self._do(name, lambda: self.dev.button(name))
 
-    # -------------------------------------------------------------------- input
     def _hit_nub(self, x, y):
-        if not self._geom:
+        if not self._hit:
             return None
-        for name, (x1, y1, x2, y2) in self._geom["nubs"].items():
+        for n, (x1, y1, x2, y2) in self._hit["nubs"].items():
             if x1 <= x <= x2 and y1 <= y <= y2:
-                return name
+                return n
         return None
 
-    def _press_stage(self, ev):
-        self._press = (ev.x, ev.y)
-        n = self._hit_nub(ev.x, ev.y)
-        if n:
-            self._nub_hi = n
+    def _hit_btn(self, x, y):
+        if not self._hit:
+            return None
+        for n, (x1, y1, x2, y2) in self._hit["buttons"].items():
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                return n
+        return None
 
-    def _release_stage(self, ev):
+    def on_down(self, x, y):
+        self._press = (x, y)
+        self._nub_hi = self._hit_nub(x, y)
+
+    def on_up(self, x, y):
         nub, self._nub_hi = self._nub_hi, None
         if self._press is None:
             return
         sx0, sy0 = self._press
         self._press = None
-        if nub and self._hit_nub(ev.x, ev.y) == nub:
+        if nub and self._hit_nub(x, y) == nub:
             self._btn(nub)
             return
-        f1, f2 = self._to_frac(sx0, sy0), self._to_frac(ev.x, ev.y)
+        b = self._hit_btn(x, y)
+        if b == "home":
+            self._do("home", self.dev.home); return
+        if b == "look":
+            self._do("look", self._look); return
+        if b == "boxes":
+            self.boxes = not self.boxes; return
+        f1, f2 = self._frac(sx0, sy0), self._frac(x, y)
         if f1 is None or f2 is None:
             return
-        if ((ev.x - sx0) ** 2 + (ev.y - sy0) ** 2) ** 0.5 > 22:
+        if ((x - sx0) ** 2 + (y - sy0) ** 2) ** 0.5 > 18:
             self._do("swipe", lambda: self._swipe(f1, f2))
         else:
             self._do("tap", lambda: self._tap(f1))
 
-    def _to_frac(self, ex, ey):
-        if not self._geom:
+    def _frac(self, x, y):
+        if not self._hit:
             return None
-        sx, sy, SW, SH = self._geom["screen"]
-        lx, ly = ex - sx, ey - sy
+        sx, sy, SW, SH = self._hit["screen"]
+        lx, ly = x - sx, y - sy
         if 0 <= lx < SW and 0 <= ly < SH:
             return lx / SW, ly / SH
         return None
@@ -526,7 +519,7 @@ class Viewer(tk.Tk):
             if dd < bd:
                 best, bd = e, dd
         if best is None:
-            return "no a11y element near"
+            return "no element near"
         same = [e for e in self.elements if e.get("label") == best.get("label")]
         idx = same.index(best) if best in same else 0
         r = self.dev.tap_label(best.get("label"), idx)
@@ -534,22 +527,47 @@ class Viewer(tk.Tk):
         self._look()
         return "'%s' %s" % (best.get("label"), "✓" if isinstance(r, dict) and r.get("ok") else r)
 
-    # -------------------------------------------------------------------- teardown
-    def _close(self):
-        try:
-            self.stream.stop()
-        except Exception:
-            pass
-        if self._owned is not None:
-            try:
-                self._owned.terminate()
-            except Exception:
-                pass
-        self.destroy()
+    def on_key(self, chars):
+        if not chars:
+            return
+        if chars in ("\r", "\n"):
+            t, self.typebuf = self.typebuf, ""
+            if t:
+                self._do("type", lambda: (self.dev.type_text(t), time.sleep(0.2), self._look())[0])
+        elif chars in ("\x7f", "\b"):
+            self.typebuf = self.typebuf[:-1]
+        elif chars == "\x1b":
+            self.typebuf = ""
+        elif chars.isprintable():
+            self.typebuf += chars
 
 
 def main():
-    Viewer().mainloop()
+    app = NSApplication.sharedApplication()
+    app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
+    _icon = os.path.join(os.path.dirname(__file__), "icon.png")
+    if os.path.exists(_icon):
+        try:
+            app.setApplicationIconImage_(NSImage.alloc().initWithContentsOfFile_(_icon))
+        except Exception:
+            pass
+    ctl = Controller()
+    timer_target = _Timer.alloc().initWithCtl_(ctl)
+    style = (NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+             NSWindowStyleMaskResizable | NSWindowStyleMaskMiniaturizable)
+    win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+        NSMakeRect(200, 120, 486, 900), style, NSBackingStoreBuffered, False)
+    win.setTitle_("Mimic")
+    win.setMinSize_(NSMakeRect(0, 0, 380, 680).size)
+    view = MimicView.alloc().initWithCtl_(ctl)
+    ctl.view = view
+    win.setContentView_(view)
+    win.makeFirstResponder_(view)
+    win.makeKeyAndOrderFront_(None)
+    app.activateIgnoringOtherApps_(True)
+    NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+        0.016, timer_target, "tick:", None, True)
+    app.run()
 
 
 if __name__ == "__main__":
