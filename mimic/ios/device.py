@@ -513,6 +513,116 @@ class IOSDevice:
         o = api.shot()
         return o.get("png_b64") if isinstance(o, dict) else None
 
+    # --------------------------------------------------- go-ios extras (USB, no frida)
+    # Thin wrappers over the bundled go-ios binary for capabilities the frida path
+    # doesn't cover: device info, GPS spoof, packet/syslog capture, app + file
+    # management, AssistiveTouch, memory-limit lift. go-ios speaks lockdown/instruments
+    # over USB, independent of frida-server.
+    def _goios(self, args: list[str], timeout: int = 30, parse_json: bool = True) -> Any:
+        r = _sh([GOIOS] + args, timeout=timeout)
+        out, err = (r.stdout or "").strip(), (r.stderr or "").strip()
+        if parse_json and out:
+            try:
+                return json.loads(out)
+            except Exception:
+                for line in reversed(out.splitlines()):
+                    try:
+                        return json.loads(line)
+                    except Exception:
+                        continue
+        return {"ok": r.returncode == 0, "stdout": out[:4000], "stderr": err[:800]}
+
+    def device_info(self, kind: str = "") -> Any:
+        """Dump device info. kind: '' (full) | 'display' | 'lockdown'."""
+        return self._goios(["info"] + ([kind] if kind in ("display", "lockdown") else []))
+
+    def battery(self) -> Any:
+        return self._goios(["batterycheck"])
+
+    def processes(self, apps_only: bool = False) -> Any:
+        return self._goios(["ps"] + (["--apps"] if apps_only else []))
+
+    def set_location(self, lat: float, lon: float) -> dict:
+        """Spoof the device GPS to (lat, lon). Needs the developer image mounted."""
+        return self._goios(["setlocation", "--lat=%s" % lat, "--lon=%s" % lon], parse_json=False)
+
+    def reset_location(self) -> dict:
+        return self._goios(["resetlocation"], parse_json=False)
+
+    def assistive_touch(self, state: str = "get") -> dict:
+        if state not in ("enable", "disable", "toggle", "get"):
+            return {"ok": 0, "error": "state must be enable|disable|toggle|get"}
+        return self._goios(["assistivetouch", state], parse_json=False)
+
+    def mem_unlimit(self, process: str) -> dict:
+        """Lift the jetsam memory limit for a process (keeps frida-heavy targets alive)."""
+        return self._goios(["memlimitoff", "--process=%s" % process], parse_json=False)
+
+    def install_app(self, path: str) -> dict:
+        return self._goios(["install", "--path=%s" % path], timeout=180, parse_json=False)
+
+    def uninstall_app(self, bundle: str) -> dict:
+        return self._goios(["uninstall", bundle], timeout=60, parse_json=False)
+
+    def files(self, op: str, bundle: str, src: str = "", dst: str = "", path: str = "/") -> dict:
+        """App-container file ops via go-ios fsync. op: tree | pull | push."""
+        a = ["fsync", "--app=%s" % bundle]
+        if op == "tree":
+            a += ["tree", "--path=%s" % path]
+        elif op in ("pull", "push"):
+            a += [op, "--srcPath=%s" % src, "--dstPath=%s" % dst]
+        else:
+            return {"ok": 0, "error": "op must be tree|pull|push"}
+        return self._goios(a, timeout=180, parse_json=(op == "tree"))
+
+    def _timed_capture(self, args: list[str], out: str, seconds: float, binary: bool) -> dict:
+        with open(out, "wb" if binary else "w") as f:
+            p = subprocess.Popen([GOIOS] + args, stdout=f, stderr=subprocess.DEVNULL)
+            time.sleep(max(1.0, float(seconds)))
+            p.terminate()
+            try:
+                p.wait(timeout=5)
+            except Exception:
+                p.kill()
+        sz = os.path.getsize(out) if os.path.exists(out) else 0
+        return {"ok": sz > 0, "out": out, "bytes": sz, "seconds": float(seconds)}
+
+    def pcap(self, seconds: float = 10.0, process: Optional[str] = None,
+             out: str = "/tmp/mimic.pcap") -> dict:
+        """Capture device network traffic to a .pcap for `seconds` (optionally one process).
+
+        go-ios pcap doesn't stream to stdout — it writes `dump-<ts>.pcap` into the CWD —
+        so we run it in a scratch dir and move the result to `out`."""
+        import glob
+        a = ["pcap"] + (["--process=%s" % process] if process else [])
+        workdir = "/tmp/mimic_pcap"
+        os.makedirs(workdir, exist_ok=True)
+        for f in glob.glob(os.path.join(workdir, "dump-*.pcap")):
+            try:
+                os.remove(f)
+            except Exception:
+                pass
+        p = subprocess.Popen([GOIOS] + a, cwd=workdir,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(max(1.0, float(seconds)))
+        p.terminate()
+        try:
+            p.wait(timeout=5)
+        except Exception:
+            p.kill()
+        dumps = sorted(glob.glob(os.path.join(workdir, "dump-*.pcap")))
+        if not dumps:
+            return {"ok": 0, "error": "no pcap produced", "seconds": float(seconds)}
+        try:
+            os.replace(dumps[-1], out)
+        except Exception:
+            out = dumps[-1]
+        sz = os.path.getsize(out) if os.path.exists(out) else 0
+        return {"ok": sz > 0, "out": out, "bytes": sz, "seconds": float(seconds)}
+
+    def syslog(self, seconds: float = 5.0, out: str = "/tmp/mimic_syslog.txt") -> dict:
+        return self._timed_capture(["syslog"], out, seconds, binary=False)
+
     def close(self):
         try:
             if self._fg:

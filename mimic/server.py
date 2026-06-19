@@ -119,6 +119,49 @@ TOOLS = [
      "inputSchema": {"type": "object", "properties": {
          "bypass": {"type": "boolean", "description": "true = disable cert validation (kill switch ON), false = restore. Omit to just read state."},
          "relaunch": {"type": "string", "description": "bundle id to kill + relaunch so the change applies now"}}}},
+    # --- go-ios powered extras (USB, independent of frida) ---
+    {"name": "mimic_info",
+     "description": "Device info via go-ios (model, iOS version, names, identifiers). Optional kind: 'display' or 'lockdown'.",
+     "inputSchema": {"type": "object", "properties": {"kind": {"type": "string", "enum": ["display", "lockdown"]}}}},
+    {"name": "mimic_battery",
+     "description": "Battery level / charging state / temperature via go-ios.",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "mimic_ps",
+     "description": "List running processes (PIDs + names). apps=true lists only apps.",
+     "inputSchema": {"type": "object", "properties": {"apps": {"type": "boolean"}}}},
+    {"name": "mimic_location",
+     "description": "Spoof the device GPS. Pass lat+lon to set, or reset=true to restore the real location. Needs the developer image mounted.",
+     "inputSchema": {"type": "object", "properties": {
+         "lat": {"type": "number"}, "lon": {"type": "number"}, "reset": {"type": "boolean"}}}},
+    {"name": "mimic_pcap",
+     "description": "Capture the device's network packets to a .pcap file for N seconds (optionally filtered to one process). For traffic study.",
+     "inputSchema": {"type": "object", "properties": {
+         "seconds": {"type": "number", "description": "duration (default 10)"},
+         "process": {"type": "string", "description": "filter to one process name"},
+         "out": {"type": "string", "description": "output .pcap path (default /tmp/mimic.pcap)"}}}},
+    {"name": "mimic_syslog",
+     "description": "Capture the device syslog to a text file for N seconds.",
+     "inputSchema": {"type": "object", "properties": {
+         "seconds": {"type": "number", "description": "duration (default 5)"},
+         "out": {"type": "string", "description": "output path (default /tmp/mimic_syslog.txt)"}}}},
+    {"name": "mimic_install",
+     "description": "Install an app from an .ipa file or .app folder path.",
+     "inputSchema": {"type": "object", "required": ["path"], "properties": {"path": {"type": "string"}}}},
+    {"name": "mimic_uninstall",
+     "description": "Uninstall an app by bundle id.",
+     "inputSchema": {"type": "object", "required": ["bundle"], "properties": {"bundle": {"type": "string"}}}},
+    {"name": "mimic_files",
+     "description": "App-container file ops via go-ios fsync. op=tree lists files under path; op=pull copies device src -> local dst; op=push copies local src -> device dst. Requires the app's bundle id.",
+     "inputSchema": {"type": "object", "required": ["op", "bundle"], "properties": {
+         "op": {"type": "string", "enum": ["tree", "pull", "push"]},
+         "bundle": {"type": "string"}, "src": {"type": "string"}, "dst": {"type": "string"},
+         "path": {"type": "string", "description": "for op=tree (default /)"}}}},
+    {"name": "mimic_memlimit",
+     "description": "Lift the jetsam memory limit for a process (keeps frida-heavy targets from being killed).",
+     "inputSchema": {"type": "object", "required": ["process"], "properties": {"process": {"type": "string"}}}},
+    {"name": "mimic_assistivetouch",
+     "description": "Manage AssistiveTouch (on-screen Home button). state: enable | disable | toggle | get.",
+     "inputSchema": {"type": "object", "properties": {"state": {"type": "string", "enum": ["enable", "disable", "toggle", "get"]}}}},
 ]
 
 
@@ -169,6 +212,35 @@ def call_tool(name, args):
         else:
             r = d.ssl_status()
         return [text(json.dumps(r, ensure_ascii=False))]
+    if name == "mimic_info":
+        return [text(json.dumps(d.device_info(args.get("kind", "")), ensure_ascii=False))]
+    if name == "mimic_battery":
+        return [text(json.dumps(d.battery(), ensure_ascii=False))]
+    if name == "mimic_ps":
+        return [text(json.dumps(d.processes(args.get("apps", False)), ensure_ascii=False))]
+    if name == "mimic_location":
+        if args.get("reset"):
+            return [text(json.dumps(d.reset_location(), ensure_ascii=False))]
+        if "lat" in args and "lon" in args:
+            return [text(json.dumps(d.set_location(args["lat"], args["lon"]), ensure_ascii=False))]
+        return [text(json.dumps({"ok": 0, "error": "pass lat+lon to set, or reset=true"}))]
+    if name == "mimic_pcap":
+        return [text(json.dumps(d.pcap(args.get("seconds", 10), args.get("process"),
+                                       args.get("out", "/tmp/mimic.pcap")), ensure_ascii=False))]
+    if name == "mimic_syslog":
+        return [text(json.dumps(d.syslog(args.get("seconds", 5),
+                                         args.get("out", "/tmp/mimic_syslog.txt")), ensure_ascii=False))]
+    if name == "mimic_install":
+        return [text(json.dumps(d.install_app(args["path"]), ensure_ascii=False))]
+    if name == "mimic_uninstall":
+        return [text(json.dumps(d.uninstall_app(args["bundle"]), ensure_ascii=False))]
+    if name == "mimic_files":
+        return [text(json.dumps(d.files(args["op"], args["bundle"], args.get("src", ""),
+                                        args.get("dst", ""), args.get("path", "/")), ensure_ascii=False))]
+    if name == "mimic_memlimit":
+        return [text(json.dumps(d.mem_unlimit(args["process"]), ensure_ascii=False))]
+    if name == "mimic_assistivetouch":
+        return [text(json.dumps(d.assistive_touch(args.get("state", "get")), ensure_ascii=False))]
     raise ValueError("unknown tool: " + name)
 
 

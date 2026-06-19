@@ -50,3 +50,4 @@ test_core.py
 
 # Unused duplicate gadget (gadget-arm64.dylib is the one the bypass installs)
 tools/frida-gadget.dylib
+*.pcap

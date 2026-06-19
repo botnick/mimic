@@ -192,6 +192,14 @@ one, explain the wall rather than experimenting:
 | `mimic_speak` | Speak on the device's own speaker (no call). |
 | `mimic_hangup` | End the current call. |
 | `mimic_ssl` | Read/toggle the SSL Kill Switch 3 cert-pinning bypass. No args = status; `bypass:true/false` to set; `relaunch:<bundle>` to apply now. |
+| `mimic_info` / `mimic_battery` / `mimic_ps` | Device info / battery / running processes (go-ios). |
+| `mimic_location` | Spoof GPS: `lat`+`lon` to set, `reset:true` to restore. |
+| `mimic_pcap` | Capture network packets to a `.pcap` for N `seconds` (optional `process`). |
+| `mimic_syslog` | Capture device syslog to a file for N `seconds`. |
+| `mimic_install` / `mimic_uninstall` | Sideload an `.ipa`/`.app` `path` / remove by `bundle`. |
+| `mimic_files` | App-container files — `op`: tree / pull / push (`bundle`, `src`, `dst`, `path`). |
+| `mimic_memlimit` | Lift a `process`'s jetsam memory limit (keep frida targets alive). |
+| `mimic_assistivetouch` | AssistiveTouch `state`: enable / disable / toggle / get. |
 
 ## SSL pinning bypass (SSLKillSwitch3)
 
@@ -232,3 +240,24 @@ Same wall as `mimic_tap`: custom-drawn views with no a11y element still can't be
 (clicks map to the nearest *known* element). The viewer auto-starts its own go-ios MJPEG
 server on port 3333 if one isn't already running, and the whole device frame is composited
 with Pillow, so the MCP server itself stays Frida-only (Pillow is an optional extra).
+
+## go-ios extras (USB tools beyond frida)
+
+These wrap the bundled go-ios binary (lockdown / instruments over USB — no frida needed):
+
+- **`mimic_info` / `mimic_battery` / `mimic_ps`** — device facts, battery, processes.
+- **`mimic_location`** — spoof GPS (`lat`+`lon` to set, `reset:true` to restore; needs the
+  developer image mounted).
+- **`mimic_pcap`** — capture the device's network packets to a `.pcap` for N seconds
+  (optionally one `process`) for traffic study — complements `mimic_ssl` + a proxy. (go-ios
+  writes `dump-*.pcap`; the tool moves it to your `out` path.)
+- **`mimic_syslog`** — dump the device syslog to a file for N seconds.
+- **`mimic_install` / `mimic_uninstall`** — sideload an `.ipa`/`.app` / remove a bundle.
+- **`mimic_files`** — app-container file ops (`op`: tree / pull / push) — e.g. pull an app's
+  databases or caches out of its sandbox.
+- **`mimic_memlimit`** — lift a process's jetsam memory limit (keeps frida-heavy targets
+  from being killed).
+- **`mimic_assistivetouch`** — toggle the on-screen AssistiveTouch home button.
+
+Not wrapped: go-ios `httpproxy` requires a supervised `--p12file` cert, so for MITM use
+`mimic_ssl` (pinning bypass) plus a manually-set proxy instead.
