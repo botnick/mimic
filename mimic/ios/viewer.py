@@ -1,26 +1,28 @@
 #!/usr/bin/env python3
-"""Mimic iOS live viewer — a premium, scrcpy-style NATIVE window for the iPhone.
+"""Mimic iOS live viewer — a premium, scrcpy-style cross-platform window for the iPhone.
 
-A native macOS (Cocoa / AppKit) window — no browser — that mirrors the jailbroken
-device LIVE over USB and drives it, reusing the proven control model in
-mimic/ios/device.py:
+A native desktop window (no browser) that mirrors the jailbroken device LIVE over USB and
+drives it, reusing the proven control model in mimic/ios/device.py:
 
-    * live screen   : go-ios MJPEG stream (full-res JPEG frames over the USB DVT channel)
+    * live screen   : go-ios MJPEG stream (full-res JPEG over the USB DVT channel)
     * click          : nearest accessibility element from look() -> tap_label()
     * drag           : swipe() (pixel coords)
-    * side buttons   : clickable nubs on the device frame -> button() (Consumer-HID)
-    * header buttons : Home / Look / A11y
-    * type           : just type while the window is focused; Enter sends -> type_text()
+    * labelled rail  : Lock / Vol+ / Vol- / Mute / Home / Look / A11y  (+ press flash)
+    * side buttons   : clickable nubs on the device frame
+    * type           : type while focused; Enter sends -> type_text()
 
-The whole window — device body, rounded screen, side buttons, header — is composited with
-Pillow into one image per frame and drawn into a single NSView; mouse clicks are hit-tested
-against that layout. We use AppKit instead of Tkinter because macOS ships a broken Tk 8.5
-with the system Python (blank windows / frozen event loop); Cocoa's run loop is solid.
+ARCHITECTURE — the whole UI (device body, rounded screen, header, button rail) is
+composited with Pillow into one image; mouse clicks are hit-tested against that layout.
+The GUI shell is pluggable so it runs everywhere:
+    * macOS  -> AppKit / Cocoa  (the system Python ships a broken Tk 8.5 that freezes,
+                                  so we drive Cocoa directly)
+    * Windows / Linux -> Tkinter (Tk 8.6 there works fine)
+The platform-agnostic `Engine` holds all the logic; each backend only pumps frames and
+forwards mouse/keyboard. Layout is fully dynamic — it reflows to any window size.
 
-Why click->nearest-label and not a raw pixel touch: discrete IOHIDEvent taps do not fire
-gesture recognizers on this device (see device.py), so taps go through the a11y tree.
-
-Run:  python3 -m mimic.ios.viewer      (needs: pip install pyobjc-framework-Cocoa pillow)
+Run:  python3 -m mimic.ios.viewer
+  macOS:        pip install pillow pyobjc-framework-Cocoa
+  Win / Linux:  pip install pillow            (Tk ships with Python)
 """
 from __future__ import annotations
 
@@ -35,16 +37,6 @@ import time
 from urllib.request import urlopen
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
-
-import objc
-from Foundation import NSData, NSObject, NSMakeRect, NSTimer
-from AppKit import (
-    NSApplication, NSWindow, NSView, NSImage, NSColor, NSApp,
-    NSBackingStoreBuffered, NSWindowStyleMaskTitled, NSWindowStyleMaskClosable,
-    NSWindowStyleMaskResizable, NSWindowStyleMaskMiniaturizable,
-    NSApplicationActivationPolicyRegular, NSCompositingOperationCopy,
-    NSBitmapImageRep, NSCalibratedRGBColorSpace,
-)
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from mimic.ios.device import IOSDevice, GOIOS  # noqa: E402
@@ -66,12 +58,14 @@ P = {
 
 
 def _font(size, bold=False):
-    paths = (["/System/Library/Fonts/SFNSDisplay.ttf", "/System/Library/Fonts/SFNS.ttf",
-              "/Library/Fonts/Arial Bold.ttf", "/System/Library/Fonts/Supplemental/Arial Bold.ttf"]
+    cands = (["/System/Library/Fonts/SFNSDisplay.ttf", "/System/Library/Fonts/SFNS.ttf",
+              "/Library/Fonts/Arial Bold.ttf", "C:/Windows/Fonts/arialbd.ttf",
+              "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"]
              if bold else
              ["/System/Library/Fonts/SFNS.ttf", "/Library/Fonts/Arial.ttf",
-              "/System/Library/Fonts/Supplemental/Arial.ttf", "/System/Library/Fonts/Helvetica.ttc"])
-    for p in paths:
+              "C:/Windows/Fonts/arial.ttf", "/System/Library/Fonts/Helvetica.ttc",
+              "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"])
+    for p in cands:
         try:
             return ImageFont.truetype(p, size)
         except Exception:
@@ -113,13 +107,13 @@ def build_chrome(W, H):
 
     def nub(name, side, cyf, lf):
         ln = int(SH * lf)
-        cy = py + b + int(SH * cyf)
+        cyy = py + b + int(SH * cyf)
         if side == "L":
             x1, x2 = px - nub_w, px + int(b * 0.4)
         else:
             x1, x2 = px + PW - int(b * 0.4), px + PW + nub_w
-        rr(d, [x1, cy, x2, cy + ln], nub_w, fill=P["nub"] + (255,), outline=P["nub_edge"] + (255,), width=1)
-        nubs[name] = (min(x1, x2) - 4, cy - 3, max(x1, x2) + 4, cy + ln + 3)
+        rr(d, [x1, cyy, x2, cyy + ln], nub_w, fill=P["nub"] + (255,), outline=P["nub_edge"] + (255,), width=1)
+        nubs[name] = (min(x1, x2) - 4, cyy - 3, max(x1, x2) + 4, cyy + ln + 3)
 
     nub("power", "R", 0.17, 0.13)
     nub("mute", "L", 0.10, 0.05)
@@ -162,38 +156,48 @@ def _ic_boxes(d, x, y, c):
         rr(d, [x + dx, y + dy, x + dx + 6, y + dy + 6], 1, outline=c, width=2)
 
 
+def _ic_volplus(d, x, y, c):
+    d.line([x - 8, y, x + 8, y], fill=c, width=2)
+    d.line([x, y - 8, x, y + 8], fill=c, width=2)
+
+
+def _ic_volminus(d, x, y, c):
+    d.line([x - 8, y, x + 8, y], fill=c, width=2)
+
+
+def _ic_mute(d, x, y, c):
+    d.polygon([(x - 9, y - 4), (x - 4, y - 4), (x + 1, y - 9), (x + 1, y + 9),
+               (x - 4, y + 4), (x - 9, y + 4)], fill=c)
+    d.line([(x + 4, y - 7), (x + 11, y + 7)], fill=P["red"], width=2)
+
+
 # ----------------------------------------------------------------- full UI compose
-_CHROME = {}  # cache the heavy device chrome (shadow/blur) per window size
+_CHROME = {}
+RAIL_W = 94
+_COLS = {"red": P["red"], "icon": P["icon"], "accent": P["accent"], "green": P["green"]}
+_ICONS = {"power": _ic_power, "volup": _ic_volplus, "voldown": _ic_volminus,
+          "mute": _ic_mute, "home": _ic_home, "look": _ic_look, "boxes": _ic_boxes}
+RAIL_BTNS = [("power", "LOCK", "red"), ("volup", "VOL +", "icon"), ("voldown", "VOL −", "icon"),
+             ("mute", "MUTE", "icon"), ("home", "HOME", "accent"), ("look", "LOOK", "accent"),
+             ("boxes", "A11Y", "green")]
 
 
-def compose(W, H, frame, *, status, conn, boxes_on, nub_hi, typebuf, fps=0, ms=0):
+def compose(W, H, frame, *, status, conn, boxes_on, nub_hi, typebuf, fps=0, ms=0, flash=None):
     img = Image.new("RGBA", (W, H), P["bg"] + (255,))
     d = ImageDraw.Draw(img)
-    # header
     cy = HEADER_H // 2
+    # header: dot · Mimic · FPS · ms · status
     d.rectangle([0, 0, W, HEADER_H], fill=P["panel"] + (255,))
     cc = {"live": P["green"], "connecting": P["amber"], "error": P["red"]}[conn]
     d.ellipse([16, cy - 5, 26, cy + 5], fill=cc + (255,))
-    d.text((36, cy - 10), "Mimic", font=F_TITLE, fill=P["text"] + (255,))
-    d.text((110, cy - 7), "%d fps · %d ms" % (fps, ms), font=F_MONO, fill=P["green"] + (255,))
-    msg = typebuf and ("⌨ " + typebuf) or status
-    d.text((220, cy - 7), msg[:28], font=F_MONO, fill=(P["accent"] if typebuf else P["dim"]) + (255,))
+    d.text((36, cy - 11), "Mimic", font=F_TITLE, fill=P["text"] + (255,))
+    d.text((114, cy - 8), "%d FPS" % fps, font=F_BTN, fill=P["green"] + (255,))
+    d.text((166, cy - 8), "%d ms" % ms, font=F_BTN, fill=P["dim"] + (255,))
+    msg = typebuf and ("type: " + typebuf) or status
+    d.text((226, cy - 7), msg[:24], font=F_MONO, fill=(P["accent"] if typebuf else P["dim"]) + (255,))
 
-    # header buttons (right): Home, Look, A11y
-    btns = {}
-    bw, bh, gap = 40, 30, 8
-    defs = [("home", _ic_home, P["accent"]), ("look", _ic_look, P["accent"]),
-            ("boxes", _ic_boxes, P["green"] if boxes_on else P["icon"])]
-    bx = W - len(defs) * (bw + gap) - 6
-    for name, icon, col in defs:
-        fill = P["btn_on"] if (name == "boxes" and boxes_on) else P["btn"]
-        rr(d, [bx, 8, bx + bw, 8 + bh], 9, fill=fill + (255,))
-        icon(d, bx + bw // 2, 8 + bh // 2, (P["text"] if (name == "boxes" and boxes_on) else col))
-        btns[name] = (bx, 8, bx + bw, 8 + bh)
-        bx += bw + gap
-
-    # phone stage below header — build_chrome is heavy (GaussianBlur), so cache + copy
-    sw, sh = W, H - HEADER_H
+    # phone stage (left of the rail)
+    sw, sh = W - RAIL_W, H - HEADER_H
     cached = _CHROME.get((sw, sh))
     if cached is None:
         cached = _CHROME[(sw, sh)] = build_chrome(sw, sh)
@@ -211,7 +215,26 @@ def compose(W, H, frame, *, status, conn, boxes_on, nub_hi, typebuf, fps=0, ms=0
                                                  outline=P["accent"] + (255,), width=2)
     img.alpha_composite(chrome, (0, HEADER_H))
 
-    # hitmap in window coords
+    # right rail: clearly-labelled buttons with press flash
+    d.rectangle([W - RAIL_W, HEADER_H, W, H], fill=P["panel"] + (255,))
+    n = len(RAIL_BTNS)
+    bh = min(66, max(46, (H - HEADER_H - 16) // n - 8))
+    gap = 8
+    total = n * bh + (n - 1) * gap
+    y0 = HEADER_H + max(8, ((H - HEADER_H) - total) // 2)
+    bx0, bx1 = W - RAIL_W + 8, W - 8
+    btns = {}
+    for i, (name, label, ckey) in enumerate(RAIL_BTNS):
+        by0 = y0 + i * (bh + gap)
+        by1 = by0 + bh
+        lit = (name == "boxes" and boxes_on) or (flash == name)
+        rr(d, [bx0, by0, bx1, by1], 13, fill=(_COLS[ckey] if lit else P["btn"]) + (255,))
+        _ICONS[name](d, (bx0 + bx1) // 2, by0 + bh // 2 - 7, P["text"] if lit else _COLS[ckey])
+        tw = d.textlength(label, font=F_BTN)
+        d.text(((bx0 + bx1) / 2 - tw / 2, by1 - 15), label, font=F_BTN,
+               fill=(P["text"] if lit else P["dim"]) + (255,))
+        btns[name] = (bx0, by0, bx1, by1)
+
     off = HEADER_H
     hit = {"screen": (sx, sy + off, SW, SH),
            "nubs": {k: (v[0], v[1] + off, v[2], v[3] + off) for k, v in geom["nubs"].items()},
@@ -260,112 +283,59 @@ def _port_open(port):
 
 
 def ensure_stream_server(port=STREAM_PORT):
-    if _port_open(port):
-        return None
+    # Always start a FRESH stream: a stale go-ios stream can hold the port open but stop
+    # delivering frames (frozen black screen), so kill any existing one first.
+    try:
+        subprocess.run(["pkill", "-f", "screenshot --stream --port=%d" % port],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+    time.sleep(0.6)
     proc = subprocess.Popen([GOIOS, "screenshot", "--stream", "--port=%d" % port],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    for _ in range(20):
+    for _ in range(25):
         if _port_open(port):
             break
         time.sleep(0.3)
     return proc
 
 
-def pil_to_nsimage(pil):
-    # write raw RGBA straight into an NSBitmapImageRep — ~13x faster than PNG-encoding
-    pil = pil.convert("RGBA")
-    w, h = pil.size
-    raw = pil.tobytes()
-    rep = NSBitmapImageRep.alloc().initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bytesPerRow_bitsPerPixel_(
-        None, w, h, 8, 4, True, False, NSCalibratedRGBColorSpace, w * 4, 32)
-    rep.bitmapData()[:] = raw
-    img = NSImage.alloc().initWithSize_((w, h))
-    img.addRepresentation_(rep)
-    return img
+# ===================================================== platform-agnostic engine ====
+class Engine:
+    """All the logic: stream, frida control, compositing, hit-testing. Produces a PIL
+    image (self.next_pil) for whatever GUI backend is driving it; backends forward
+    mouse/keyboard in TOP-LEFT window coordinates."""
 
-
-# ------------------------------------------------------------------- AppKit window
-def _point(view, ev):
-    # view is NOT flipped (default bottom-left origin) so the NSImage draws upright;
-    # convert the click to the top-left coords our PIL hitmap uses.
-    p = view.convertPoint_fromView_(ev.locationInWindow(), None)
-    return (p.x, view.bounds().size.height - p.y)
-
-
-class MimicView(NSView):
-    def initWithCtl_(self, ctl):
-        self = objc.super(MimicView, self).initWithFrame_(NSMakeRect(0, 0, 486, 900))
-        self._ctl = ctl
-        self._img = None
-        return self
-
-    def isFlipped(self):
-        return False
-
-    def acceptsFirstResponder(self):
-        return True
-
-    def setImage_(self, nsimg):
-        self._img = nsimg
-        self.setNeedsDisplay_(True)
-
-    def drawRect_(self, rect):
-        from AppKit import NSRectFill
-        NSColor.colorWithCalibratedRed_green_blue_alpha_(0.04, 0.043, 0.06, 1.0).set()
-        NSRectFill(self.bounds())
-        if self._img is not None:
-            self._img.drawInRect_fromRect_operation_fraction_(
-                self.bounds(), NSMakeRect(0, 0, 0, 0), NSCompositingOperationCopy, 1.0)
-
-    def mouseDown_(self, ev):
-        self._ctl.on_down(*_point(self, ev))
-
-    def mouseUp_(self, ev):
-        self._ctl.on_up(*_point(self, ev))
-
-    def keyDown_(self, ev):
-        self._ctl.on_key(ev.characters())
-
-
-class _Timer(NSObject):
-    def initWithCtl_(self, ctl):
-        self = objc.super(_Timer, self).init()
-        self._ctl = ctl
-        return self
-
-    def tick_(self, timer):
-        try:
-            self._ctl.tick()
-        except Exception:
-            pass
-
-
-class Controller:
     def __init__(self):
         self.dev = IOSDevice()
         self.elements, self.boxes = [], False
         self.status, self.conn = "starting…", "connecting"
         self.typebuf = ""
+        self.fps, self.lat_ms = 0, 0
+        self.wh = (0, 0)
+        self.next_pil = None
         self._jobs = queue.Queue()
         self._press = None
         self._nub_hi = None
         self._hit = None
+        self._flash = None
         self._owned = None
-        self.view = None
+        self._last_frame = time.time()
+        self._fid = None
+        self._last_wake = 0.0
         self.stream = MJPEGStream(STREAM_URL)
-        self._wh = (0, 0)
-        self._next_img = None
-        self.fps, self.lat_ms = 0, 0
-        threading.Thread(target=self._boot, daemon=True).start()
-        threading.Thread(target=self._worker, daemon=True).start()
-        threading.Thread(target=self._render_loop, daemon=True).start()
+        for fn in (self._boot, self._worker, self._render_loop, self._watchdog):
+            threading.Thread(target=fn, daemon=True).start()
 
-    # ---- worker plumbing ----
+    # ---- worker / boot ----
     def _set(self, s):
         self.status = s
 
     def _do(self, name, fn):
         self._jobs.put((name, fn))
+
+    def _btn(self, name):
+        self._do(name, lambda: self.dev.button(name))
 
     def _worker(self):
         while True:
@@ -383,6 +353,10 @@ class Controller:
         self._set("connecting frida…")
         try:
             self.dev.ensure_frida()
+            try:
+                self.dev.wake_unlock()
+            except Exception:
+                pass
             self._look()
             self._set("ready")
         except Exception as e:  # noqa: BLE001
@@ -395,33 +369,26 @@ class Controller:
         self._set("look: %s · %d el" % (app, len(self.elements)))
         return app
 
-    # ---- main-thread timer: stays CHEAP so clicks are instant ----
-    def tick(self):
-        if self.view is None:
-            return
-        b = self.view.bounds()
-        self._wh = (int(b.size.width), int(b.size.height))
-        img = self._next_img
-        if img is not None:
-            self._next_img = None
-            self.view.setImage_(img)
-
-    # ---- background render thread: heavy PIL/NSImage work, as fast as frames arrive ----
+    # ---- render thread: heavy PIL work, as fast as frames arrive ----
     def _render_loop(self):
         last_id, last_ui, last_draw = None, None, 0.0
         cnt, t_fps = 0, time.time()
         while True:
-            W, H = self._wh
-            if W < 40 or H < 40:
+            W, H = self.wh
+            if W < 60 or H < 60:
                 time.sleep(0.02)
                 continue
             self.conn = ("live" if self.stream.connected
                          else "error" if self.stream.error else "connecting")
             cur = self.stream.latest
             now = time.time()
-            ui = (self.status, self._nub_hi, self.boxes, self.typebuf, self.conn)
-            if id(cur) == last_id and ui == last_ui and now - last_draw < 0.3:
-                time.sleep(0.003)                   # idle: nothing new to draw
+            if cur is not None and id(cur) != self._fid:
+                self._fid = id(cur)
+                self._last_frame = now
+            flash = self._flash[0] if (self._flash and now < self._flash[1]) else None
+            ui = (self.status, self._nub_hi, self.boxes, self.typebuf, self.conn, flash, W, H)
+            if id(cur) == last_id and ui == last_ui and now - last_draw < 0.2:
+                time.sleep(0.003)
                 continue
             last_id, last_ui, last_draw = id(cur), ui, now
             t0 = time.time()
@@ -434,9 +401,9 @@ class Controller:
             try:
                 img, hit = compose(W, H, frame, status=self.status, conn=self.conn,
                                    boxes_on=self.boxes, nub_hi=self._nub_hi,
-                                   typebuf=self.typebuf, fps=self.fps, ms=self.lat_ms)
+                                   typebuf=self.typebuf, fps=self.fps, ms=self.lat_ms, flash=flash)
                 self._hit = hit
-                self._next_img = pil_to_nsimage(img)
+                self.next_pil = img
             except Exception:
                 continue
             self.lat_ms = int(self.lat_ms * 0.7 + (time.time() - t0) * 1000 * 0.3)
@@ -445,29 +412,42 @@ class Controller:
                 self.fps = int(round(cnt / (now - t_fps)))
                 cnt, t_fps = 0, now
 
-    # ---- input ----
-    def _btn(self, name):
-        self._do(name, lambda: self.dev.button(name))
+    # ---- self-healing watchdog: restart a stalled stream, keep the display awake ----
+    def _watchdog(self):
+        while True:
+            time.sleep(2.0)
+            now = time.time()
+            if now - self._last_wake > 18:          # keep display awake -> no black-from-sleep
+                self._last_wake = now
+                try:
+                    self.dev.keep_awake()
+                except Exception:
+                    pass
+            if self.stream.connected and now - self._last_frame > 4.0:
+                self._set("stream stalled — self-healing…")
+                try:
+                    self.stream.stop()
+                    ensure_stream_server()           # kill stale + respawn fresh
+                    self.stream = MJPEGStream(STREAM_URL)
+                    self.stream.start()
+                    self._last_frame = time.time()
+                    try:
+                        self.dev.wake()
+                    except Exception:
+                        pass
+                except Exception as e:  # noqa: BLE001
+                    self._set("heal failed: %s" % e)
 
-    def _hit_nub(self, x, y):
-        if not self._hit:
-            return None
-        for n, (x1, y1, x2, y2) in self._hit["nubs"].items():
-            if x1 <= x <= x2 and y1 <= y <= y2:
-                return n
-        return None
-
-    def _hit_btn(self, x, y):
-        if not self._hit:
-            return None
-        for n, (x1, y1, x2, y2) in self._hit["buttons"].items():
+    # ---- input (TOP-LEFT window coords from the backend) ----
+    def _hit_in(self, group, x, y):
+        for n, (x1, y1, x2, y2) in (self._hit or {}).get(group, {}).items():
             if x1 <= x <= x2 and y1 <= y <= y2:
                 return n
         return None
 
     def on_down(self, x, y):
         self._press = (x, y)
-        self._nub_hi = self._hit_nub(x, y)
+        self._nub_hi = self._hit_in("nubs", x, y)
 
     def on_up(self, x, y):
         nub, self._nub_hi = self._nub_hi, None
@@ -475,16 +455,22 @@ class Controller:
             return
         sx0, sy0 = self._press
         self._press = None
-        if nub and self._hit_nub(x, y) == nub:
+        if nub and self._hit_in("nubs", x, y) == nub:
+            self._flash = (nub, time.time() + 0.2)
             self._btn(nub)
             return
-        b = self._hit_btn(x, y)
-        if b == "home":
-            self._do("home", self.dev.home); return
-        if b == "look":
-            self._do("look", self._look); return
-        if b == "boxes":
-            self.boxes = not self.boxes; return
+        b = self._hit_in("buttons", x, y)
+        if b:
+            self._flash = (b, time.time() + 0.2)
+            if b in ("power", "volup", "voldown", "mute"):
+                self._btn(b)
+            elif b == "home":
+                self._do("home", self.dev.home)
+            elif b == "look":
+                self._do("look", self._look)
+            elif b == "boxes":
+                self.boxes = not self.boxes
+            return
         f1, f2 = self._frac(sx0, sy0), self._frac(x, y)
         if f1 is None or f2 is None:
             return
@@ -541,33 +527,173 @@ class Controller:
         elif chars.isprintable():
             self.typebuf += chars
 
-
-def main():
-    app = NSApplication.sharedApplication()
-    app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
-    _icon = os.path.join(os.path.dirname(__file__), "icon.png")
-    if os.path.exists(_icon):
+    def shutdown(self):
         try:
-            app.setApplicationIconImage_(NSImage.alloc().initWithContentsOfFile_(_icon))
+            self.stream.stop()
         except Exception:
             pass
-    ctl = Controller()
-    timer_target = _Timer.alloc().initWithCtl_(ctl)
+        if self._owned is not None:
+            try:
+                self._owned.terminate()
+            except Exception:
+                pass
+
+
+# ===================================================== macOS backend (AppKit) ======
+def run_appkit(engine):
+    import objc
+    from Foundation import NSObject, NSMakeRect, NSTimer, NSBundle
+    from AppKit import (
+        NSApplication, NSWindow, NSView, NSImage, NSColor, NSBitmapImageRep,
+        NSCalibratedRGBColorSpace, NSRectFill, NSBackingStoreBuffered,
+        NSWindowStyleMaskTitled, NSWindowStyleMaskClosable, NSWindowStyleMaskResizable,
+        NSWindowStyleMaskMiniaturizable, NSApplicationActivationPolicyRegular,
+        NSCompositingOperationCopy, NSMenu, NSMenuItem,
+    )
+    try:  # make the macOS menu bar read "Mimic", not "Python"
+        NSBundle.mainBundle().infoDictionary()["CFBundleName"] = "Mimic"
+    except Exception:
+        pass
+
+    def pil_to_nsimage(pil):
+        pil = pil.convert("RGBA")
+        w, h = pil.size
+        rep = NSBitmapImageRep.alloc().initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bytesPerRow_bitsPerPixel_(
+            None, w, h, 8, 4, True, False, NSCalibratedRGBColorSpace, w * 4, 32)
+        rep.bitmapData()[:] = pil.tobytes()
+        img = NSImage.alloc().initWithSize_((w, h))
+        img.addRepresentation_(rep)
+        return img
+
+    def pt(view, ev):  # Cocoa is bottom-left; flip to the top-left coords compose uses
+        p = view.convertPoint_fromView_(ev.locationInWindow(), None)
+        return (p.x, view.bounds().size.height - p.y)
+
+    class MimicView(NSView):
+        def initWithEngine_(self, eng):
+            self = objc.super(MimicView, self).initWithFrame_(NSMakeRect(0, 0, 540, 920))
+            self._eng = eng
+            self._img = None
+            return self
+
+        def isFlipped(self):
+            return False
+
+        def acceptsFirstResponder(self):
+            return True
+
+        def setImage_(self, im):
+            self._img = im
+            self.setNeedsDisplay_(True)
+
+        def drawRect_(self, rect):
+            NSColor.colorWithCalibratedRed_green_blue_alpha_(0.04, 0.043, 0.06, 1.0).set()
+            NSRectFill(self.bounds())
+            if self._img is not None:
+                self._img.drawInRect_fromRect_operation_fraction_(
+                    self.bounds(), NSMakeRect(0, 0, 0, 0), NSCompositingOperationCopy, 1.0)
+
+        def mouseDown_(self, ev):
+            self._eng.on_down(*pt(self, ev))
+
+        def mouseUp_(self, ev):
+            self._eng.on_up(*pt(self, ev))
+
+        def keyDown_(self, ev):
+            self._eng.on_key(ev.characters())
+
+    class Pump(NSObject):
+        def initWith_view_(self, eng, view):
+            self = objc.super(Pump, self).init()
+            self._eng, self._view, self._last = eng, view, None
+            return self
+
+        def tick_(self, timer):
+            b = self._view.bounds()
+            self._eng.wh = (int(b.size.width), int(b.size.height))
+            pil = self._eng.next_pil
+            if pil is not None and id(pil) != self._last:
+                self._last = id(pil)
+                self._view.setImage_(pil_to_nsimage(pil))
+
+    app = NSApplication.sharedApplication()
+    app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
+    # proper app menu (Mimic ▸ Hide / Quit) instead of the bare default
+    menubar = NSMenu.alloc().init()
+    appmi = NSMenuItem.alloc().init()
+    menubar.addItem_(appmi)
+    app.setMainMenu_(menubar)
+    appmenu = NSMenu.alloc().init()
+    appmenu.addItemWithTitle_action_keyEquivalent_("Hide Mimic", "hide:", "h")
+    appmenu.addItem_(NSMenuItem.separatorItem())
+    appmenu.addItemWithTitle_action_keyEquivalent_("Quit Mimic", "terminate:", "q")
+    appmi.setSubmenu_(appmenu)
+    icon = os.path.join(os.path.dirname(__file__), "icon.png")
+    if os.path.exists(icon):
+        try:
+            app.setApplicationIconImage_(NSImage.alloc().initWithContentsOfFile_(icon))
+        except Exception:
+            pass
     style = (NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
              NSWindowStyleMaskResizable | NSWindowStyleMaskMiniaturizable)
     win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-        NSMakeRect(200, 120, 486, 900), style, NSBackingStoreBuffered, False)
+        NSMakeRect(200, 100, 540, 920), style, NSBackingStoreBuffered, False)
     win.setTitle_("Mimic")
-    win.setMinSize_(NSMakeRect(0, 0, 380, 680).size)
-    view = MimicView.alloc().initWithCtl_(ctl)
-    ctl.view = view
+    win.setMinSize_(NSMakeRect(0, 0, 470, 700).size)
+    view = MimicView.alloc().initWithEngine_(engine)
     win.setContentView_(view)
     win.makeFirstResponder_(view)
     win.makeKeyAndOrderFront_(None)
     app.activateIgnoringOtherApps_(True)
-    NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-        0.016, timer_target, "tick:", None, True)
+    pump = Pump.alloc().initWith_view_(engine, view)
+    NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(0.016, pump, "tick:", None, True)
     app.run()
+
+
+# ================================================ Windows / Linux backend (Tk) =====
+def run_tk(engine):
+    import tkinter as tk
+    from PIL import ImageTk
+
+    root = tk.Tk()
+    root.title("Mimic")
+    root.configure(bg="#0a0b0f")
+    root.geometry("540x920")
+    root.minsize(470, 700)
+    try:
+        icon = os.path.join(os.path.dirname(__file__), "icon.png")
+        if os.path.exists(icon):
+            root.iconphoto(True, ImageTk.PhotoImage(Image.open(icon)))
+    except Exception:
+        pass
+    canvas = tk.Canvas(root, bg="#0a0b0f", highlightthickness=0)
+    canvas.pack(fill="both", expand=True)
+    canvas.bind("<ButtonPress-1>", lambda e: engine.on_down(e.x, e.y))
+    canvas.bind("<ButtonRelease-1>", lambda e: engine.on_up(e.x, e.y))
+    root.bind("<Key>", lambda e: engine.on_key(e.char if e.char else ""))
+    state = {"last": None, "img": None}
+
+    def tick():
+        engine.wh = (canvas.winfo_width(), canvas.winfo_height())
+        pil = engine.next_pil
+        if pil is not None and id(pil) != state["last"]:
+            state["last"] = id(pil)
+            state["img"] = ImageTk.PhotoImage(pil)
+            canvas.delete("all")
+            canvas.create_image(0, 0, anchor="nw", image=state["img"])
+        root.after(16, tick)
+
+    root.protocol("WM_DELETE_WINDOW", lambda: (engine.shutdown(), root.destroy()))
+    root.after(16, tick)
+    root.mainloop()
+
+
+def main():
+    engine = Engine()
+    if sys.platform == "darwin":
+        run_appkit(engine)
+    else:
+        run_tk(engine)
 
 
 if __name__ == "__main__":
