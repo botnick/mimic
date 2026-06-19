@@ -348,10 +348,15 @@ class IOSDevice:
         return {"app": ident, "elements": out[:70]}
 
     def tap_label(self, label: str, index: int = 0) -> dict:
-        """'Tap' an element by label via its accessibility action (sendActions)."""
+        """'Tap' an element by label via its accessibility action (sendActions). On the
+        home screen (no foreground app) route through SpringBoard — mirrors look() — so
+        home-screen icons / widgets are tappable (and tapping an icon launches its app)."""
         ident, api = self._foreground()
         if api is None:
-            return {"ok": 0, "error": "no frida access to foreground app", "app": ident}
+            if ident is None:
+                api = self._springboard()
+            else:
+                return {"ok": 0, "error": "no frida access to foreground app", "app": ident}
         return api.activate(label, index)
 
     def type_text(self, text: str, field_label: str = "") -> dict:
