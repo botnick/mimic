@@ -17,8 +17,14 @@ dependencies = [
     "frida>=16.0.0",
 ]
 
+[project.optional-dependencies]
+# The live screen viewer (mimic/ios/viewer.py) renders the device frame with Pillow.
+# The MCP server itself stays Frida-only — install this extra only for the viewer.
+viewer = ["pillow>=9.2"]
+
 [project.scripts]
 mimic-mcp = "mimic.server:main"
+mimic-viewer = "mimic.ios.viewer:main"
 
 [tool.setuptools]
 packages = ["mimic", "mimic.ios"]

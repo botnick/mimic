@@ -83,6 +83,10 @@ TOOLS = [
          "amount": {"type": "integer", "description": "repeat count (default 1)"}}}},
     {"name": "mimic_home", "description": "Press Home (go to home screen / dismiss app).",
      "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "mimic_button",
+     "description": "Press a hardware button: home, volup, voldown, mute, or power. 'power' is a SHORT press = lock the screen (it will NOT power the device off). Volume changes are confirmed by the on-screen HUD.",
+     "inputSchema": {"type": "object", "required": ["button"], "properties": {
+         "button": {"type": "string", "enum": ["home", "volup", "voldown", "mute", "power"]}}}},
     {"name": "mimic_wake_unlock", "description": "Wake the display and unlock (no passcode).",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "mimic_current_app", "description": "Bundle id of the frontmost app.",
@@ -138,6 +142,8 @@ def call_tool(name, args):
         d.scroll(args["direction"], args.get("amount", 1)); return [text("ok")]
     if name == "mimic_home":
         d.home(); return [text("ok")]
+    if name == "mimic_button":
+        return [text(json.dumps(d.button(args["button"]), ensure_ascii=False))]
     if name == "mimic_wake_unlock":
         return [text(json.dumps(d.wake_unlock(), ensure_ascii=False))]
     if name == "mimic_current_app":

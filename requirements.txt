@@ -6,3 +6,7 @@
 # frida-server running on the jailbroken iPhone.
 
 frida>=16.0.0
+
+# Optional — only for the live screen viewer (`python3 -m mimic.ios.viewer`):
+#   pip install pillow>=9.2
+

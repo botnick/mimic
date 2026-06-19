@@ -302,6 +302,20 @@ class IOSDevice:
             time.sleep(0.25)
         return True
 
+    # Hardware buttons via Consumer-HID (the same path as home; see agent.js hwkey).
+    _BUTTONS = {"home": 0x40, "volup": 0xE9, "volumeup": 0xE9, "voldown": 0xEA,
+                "volumedown": 0xEA, "mute": 0xE2, "power": 0x30, "lock": 0x30}
+
+    def button(self, name: str) -> dict:
+        """Press a hardware button: home | volup | voldown | mute | power/lock.
+        A short press — power/lock just locks the screen, it won't power off."""
+        usage = self._BUTTONS.get(name.lower().replace("_", "").replace(" ", ""))
+        if usage is None:
+            return {"ok": 0, "error": "unknown button: " + name,
+                    "buttons": sorted(set(self._BUTTONS))}
+        self._springboard().hwkey(usage)
+        return {"ok": 1, "button": name, "usage": usage}
+
     # ----------------------------------------------------- in-app (frida foreground)
     def look(self, actionable_only: bool = True) -> dict:
         """Token-efficient screen read: app id + compact actionable element list."""

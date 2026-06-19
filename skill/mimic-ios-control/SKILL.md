@@ -2,9 +2,10 @@
 name: mimic-ios-control
 description: >-
   Drive the connected iPhone through the Mimic MCP (tools named mimic_*): look at the
-  screen, launch apps, tap, type, swipe, wake/unlock, record video, place a call and
-  speak TTS that the callee hears, operate anti-frida apps, and toggle the system-wide SSL
-  certificate-pinning bypass (SSLKillSwitch3). Use this skill WHENEVER
+  screen, launch apps, tap, type, swipe, wake/unlock, press hardware buttons
+  (volume / power-lock / mute), record video, mirror the screen live in a desktop window,
+  place a call and speak TTS that the callee hears, operate anti-frida apps, and toggle the
+  system-wide SSL certificate-pinning bypass (SSLKillSwitch3). Use this skill WHENEVER
   the user asks you to do anything on "the phone" / "มือถือ" / iPhone through Mimic —
   e.g. "เปิดแอพ X", "พิมพ์/ส่งข้อความใน LINE/IG/IDOL+", "โทรหา <เบอร์> แล้วบอกว่า...",
   "กดปุ่ม...", "อัดวิดีโอจอ", "เลื่อนฟีด", "เช็คว่าตอนนี้เปิดแอพอะไร", "ปิด/เปิด ssl pinning" — even when the
@@ -150,6 +151,9 @@ one, explain the wall rather than experimenting:
   Tap goes through accessibility — that's why `mimic_tap` is label-based. A custom,
   non-`UIControl` view (e.g. the Calculator keypad) may simply not be tappable; if
   `mimic_tap` doesn't fire on such an element, that's the known limit, not a bug to retry.
+  (Hardware *buttons* are a different story: volume / power-lock / mute / home go through
+  Consumer-HID keyboard usages — not the digitizer — and DO work. Use `mimic_button`;
+  validated on-device, volume shows the HUD and `power` locks the screen.)
 
 ## Recovery when something breaks
 
@@ -182,6 +186,7 @@ one, explain the wall rather than experimenting:
 | `mimic_type` | Type into a field (`field` targets one; else first field). |
 | `mimic_swipe` | Scroll/page `up`/`down`/`left`/`right` (`amount` repeats). |
 | `mimic_home` | Press Home. |
+| `mimic_button` | Press a hardware button: `home` / `volup` / `voldown` / `mute` / `power`. `power` is a SHORT press = lock the screen (it will NOT power off); volume shows the on-screen HUD. |
 | `mimic_close` | Force-quit an app (`bundle`, default frontmost). |
 | `mimic_call` | Call, wait for answer, speak TTS into the uplink so the **callee** hears it. |
 | `mimic_speak` | Speak on the device's own speaker (no call). |
@@ -204,3 +209,26 @@ inspection. It works by reading/writing the tweak's own prefs file
   (it kills + relaunches that one app), or just close and reopen the app yourself.
 - `found:false` means the prefs file wasn't there yet — the tool still writes it, but
   double-check SSLKillSwitch3 is actually installed if a target app still pins.
+
+## Live screen viewer (desktop window)
+
+To watch the phone in real time and click it like scrcpy, there is a native Tk window
+(no browser):
+
+```bash
+python3 -m mimic.ios.viewer      # needs Pillow:  pip install pillow
+```
+
+It mirrors the screen over USB via go-ios' MJPEG stream and renders a premium device
+frame (rounded screen, clickable side buttons). Controls reuse the SAME proven model as
+the MCP tools:
+
+- **click** a UI element → maps to the nearest accessibility element → `tap_label`
+- **drag** → `swipe`
+- **side-button nubs + the rail** → Lock / Vol± / Mute / Home (`device.button()`)
+- **type box** → `type_text`; **A11Y** toggle overlays the tappable elements
+
+Same wall as `mimic_tap`: custom-drawn views with no a11y element still can't be tapped
+(clicks map to the nearest *known* element). The viewer auto-starts its own go-ios MJPEG
+server on port 3333 if one isn't already running, and the whole device frame is composited
+with Pillow, so the MCP server itself stays Frida-only (Pillow is an optional extra).

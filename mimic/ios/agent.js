@@ -486,6 +486,11 @@ rpc.exports = {
   },
   swipe: function(x1,y1,x2,y2,ms){ swipe(x1,y1,x2,y2,ms); return true; },
   home: function(){ ObjC.schedule(ObjC.mainQueue,function(){consumerKey(0x40);}); return true; },
+  // Hardware buttons via the same proven Consumer-HID path as home (usage page 0x0C):
+  // volUp 0xE9, volDown 0xEA, mute 0xE2, power/lock 0x30, home 0x40. A quick down+up =
+  // a short press (lock, not power-off). consumerKey is lightweight HID dispatch, so it
+  // is safe (home has used it all along) — unlike digitizer taps it isn't a dead-end.
+  hwkey: function(usage){ ObjC.schedule(ObjC.mainQueue,function(){consumerKey(usage);}); return true; },
   shot: function(){ var out=null; ObjC.schedule(ObjC.mainQueue,function(){ try{out=shot();}catch(e){out={err:''+e};} }); var n=0; while(out===null&&n<200){ Thread.sleep(0.01); n++; } return out; },
   // video: runs on the frida thread (off main) so the UI keeps animating while we capture
   recRun: function(dir, fps, secs, q){ return recRun(dir, fps, secs, q); },
