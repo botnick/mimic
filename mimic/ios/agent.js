@@ -387,17 +387,26 @@ function rsFrameB64(q){
   if (!_liveSurf || _liveSurf.isNull()) _liveSurf = rsCreateSurface();
   if (!_liveSurf || _liveSurf.isNull()) return null;
   var surf = _liveSurf;
-  _rs.CARender(0, _rs.lcd.handle, surf, 0, 0);
-  _rs.IOSurfaceLock(surf, 1, NULL);
-  var base = _rs.IOSurfaceGetBaseAddress(surf);
-  var bpr = _rs.IOSurfaceGetBytesPerRow(surf).toInt32();
-  var ctx = _rs.CGBitmapContextCreate(base, W, H, 8, bpr, _rs.cs, 0x2002);
-  var cg = _rs.CGBitmapContextCreateImage(ctx);
-  _rs.IOSurfaceUnlock(surf, 1, NULL);
-  var ui = ObjC.classes.UIImage.imageWithCGImage_(cg);
-  var jpg = new ObjC.Object(_rs.UIImageJPEG(ui, q||0.4));
-  var b64 = jpg.base64EncodedStringWithOptions_(0).toString();
-  _rs.CGImageRelease(cg); _rs.CGContextRelease(ctx);
+  // EACH frame in its own autorelease pool — the UIImage / JPEG NSData / base64 NSString
+  // are autoreleased, and without draining them per frame they pile up at 30-60 fps until
+  // jetsam kills SpringBoard / reboots the device. (recRun does the same.)
+  var pool = ObjC.classes.NSAutoreleasePool.alloc().init();
+  var b64 = null;
+  try {
+    _rs.CARender(0, _rs.lcd.handle, surf, 0, 0);
+    _rs.IOSurfaceLock(surf, 1, NULL);
+    var base = _rs.IOSurfaceGetBaseAddress(surf);
+    var bpr = _rs.IOSurfaceGetBytesPerRow(surf).toInt32();
+    var ctx = _rs.CGBitmapContextCreate(base, W, H, 8, bpr, _rs.cs, 0x2002);
+    var cg = _rs.CGBitmapContextCreateImage(ctx);
+    _rs.IOSurfaceUnlock(surf, 1, NULL);
+    var ui = ObjC.classes.UIImage.imageWithCGImage_(cg);
+    var jpg = new ObjC.Object(_rs.UIImageJPEG(ui, q||0.4));
+    b64 = jpg.base64EncodedStringWithOptions_(0).toString();
+    _rs.CGImageRelease(cg); _rs.CGContextRelease(ctx);
+  } finally {
+    pool.release();
+  }
   return b64;
 }
 function pad5(n){ n=''+n; while(n.length<5) n='0'+n; return n; }
@@ -517,6 +526,10 @@ rpc.exports = {
   // video: runs on the frida thread (off main) so the UI keeps animating while we capture
   recRun: function(dir, fps, secs, q){ return recRun(dir, fps, secs, q); },
   frame: function(q){ try { return rsFrameB64(q); } catch(e){ return null; } },
+  // live finger: down/move/up via the digitizer (drives scroll/pan like a real touch).
+  touchDown: function(x,y){ digitizer(x/W, y/H, true); return true; },
+  touchMove: function(x,y){ digitizer(x/W, y/H, true); return true; },
+  touchUp: function(x,y){ digitizer(x/W, y/H, false); return true; },
   readFile: function(path){ return readFileB64(path); },
   speakUplink: function(text, lang, rate, pitch){ return speakUplink(text, lang, rate, pitch); },
   uplinkSpeaking: function(){ try { return !!(_synth && _synth.isSpeaking()); } catch(e){ return false; } },

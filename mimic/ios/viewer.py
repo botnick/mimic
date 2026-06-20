@@ -329,7 +329,7 @@ class FridaSource(threading.Thread):
                     self.latest = b
                     self.seq += 1
                     self.connected = True
-                    time.sleep(0.006)               # ~ leave frida headroom for taps
+                    time.sleep(0.02)                # ~25 fps: safe + leaves frida for live touch
                 else:
                     self.connected = False
                     time.sleep(0.1)
@@ -368,7 +368,9 @@ class Engine:
         self.stream = MJPEGStream(STREAM_URL)        # go-ios fallback, lazy-started
         self.frida_src = FridaSource(self.dev)       # CARenderServer source, started in _boot
         self.source = self.frida_src
-        for fn in (self._boot, self._worker, self._render_loop, self._watchdog):
+        self._touchq = queue.Queue()
+        self._dragging = False
+        for fn in (self._boot, self._worker, self._render_loop, self._watchdog, self._touch_loop):
             threading.Thread(target=fn, daemon=True).start()
 
     # ---- worker / boot ----
@@ -512,11 +514,34 @@ class Engine:
 
     def on_down(self, x, y):
         self._press = (x, y)
+        self._dragging = False
         self._nub_hi = self._hit_in("nubs", x, y)
+
+    def on_move(self, x, y):
+        """Live finger drag — real scrolling that follows the cursor (digitizer touch)."""
+        if self._press is None or self._nub_hi:
+            return
+        if not self._dragging:
+            f0 = self._frac(*self._press)
+            if f0 is None or ((x - self._press[0]) ** 2 + (y - self._press[1]) ** 2) ** 0.5 < 8:
+                return
+            self._dragging = True
+            self._touchq.put(("down", f0))
+        f = self._frac(x, y)
+        if f is not None:
+            self._touchq.put(("move", f))
 
     def on_up(self, x, y):
         nub, self._nub_hi = self._nub_hi, None
         if self._press is None:
+            return
+        if self._dragging:                           # finish a live finger drag
+            f = self._frac(x, y) or self._frac(*self._press)
+            if f:
+                self._touchq.put(("up", f))
+            self._dragging = False
+            self._press = None
+            self._do("look", self._look)
             return
         sx0, sy0 = self._press
         self._press = None
@@ -538,13 +563,36 @@ class Engine:
             elif b == "drm":
                 self.toggle_drm()
             return
-        f1, f2 = self._frac(sx0, sy0), self._frac(x, y)
-        if f1 is None or f2 is None:
-            return
-        if ((x - sx0) ** 2 + (y - sy0) ** 2) ** 0.5 > 18:
-            self._do("swipe", lambda: self._swipe(f1, f2))
-        else:
+        f1 = self._frac(sx0, sy0)
+        if f1 is not None:
             self._do("tap", lambda: self._tap(f1))
+
+    def _touch_loop(self):
+        w, h = SCREEN_PX
+        while True:
+            items = [self._touchq.get()]
+            try:
+                while True:
+                    items.append(self._touchq.get_nowait())
+            except queue.Empty:
+                pass
+            out = []                                  # collapse runs of moves to the latest
+            for it in items:
+                if it[0] == "move" and out and out[-1][0] == "move":
+                    out[-1] = it
+                else:
+                    out.append(it)
+            for op, fr in out:
+                try:
+                    x, y = int(fr[0] * w), int(fr[1] * h)
+                    if op == "down":
+                        self.dev.touch_down(x, y)
+                    elif op == "move":
+                        self.dev.touch_move(x, y)
+                    else:
+                        self.dev.touch_up(x, y)
+                except Exception:
+                    pass
 
     def _frac(self, x, y):
         if not self._hit:
@@ -663,6 +711,9 @@ def run_appkit(engine):
         def mouseDown_(self, ev):
             self._eng.on_down(*pt(self, ev))
 
+        def mouseDragged_(self, ev):
+            self._eng.on_move(*pt(self, ev))
+
         def mouseUp_(self, ev):
             self._eng.on_up(*pt(self, ev))
 
@@ -736,6 +787,7 @@ def run_tk(engine):
     canvas = tk.Canvas(root, bg="#0a0b0f", highlightthickness=0)
     canvas.pack(fill="both", expand=True)
     canvas.bind("<ButtonPress-1>", lambda e: engine.on_down(e.x, e.y))
+    canvas.bind("<B1-Motion>", lambda e: engine.on_move(e.x, e.y))
     canvas.bind("<ButtonRelease-1>", lambda e: engine.on_up(e.x, e.y))
     root.bind("<Key>", lambda e: engine.on_key(e.char if e.char else ""))
     state = {"last": None, "img": None}

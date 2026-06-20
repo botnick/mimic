@@ -316,6 +316,16 @@ class IOSDevice:
         self._springboard().hwkey(usage)
         return {"ok": 1, "button": name, "usage": usage}
 
+    # live finger tracking (real-feel drag/scroll) — x,y in screen PIXELS
+    def touch_down(self, x: int, y: int):
+        return self._springboard().touch_down(int(x), int(y))
+
+    def touch_move(self, x: int, y: int):
+        return self._springboard().touch_move(int(x), int(y))
+
+    def touch_up(self, x: int, y: int):
+        return self._springboard().touch_up(int(x), int(y))
+
     # ----------------------------------------------------- in-app (frida foreground)
     def look(self, actionable_only: bool = True) -> dict:
         """Token-efficient screen read: app id + compact actionable element list."""
