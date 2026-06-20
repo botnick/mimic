@@ -475,7 +475,7 @@ class Engine:
             self._set("TURBO ON · CARenderServer (high-fps)")
         else:
             if not self.stream.is_alive():
-                self._owned = ensure_stream_server()   # own the go-ios proc so shutdown can kill it
+                self._own_stream()                     # own the go-ios proc so shutdown can kill it
                 self.stream = MJPEGStream(STREAM_URL)
                 self.stream.start()
             self.source = self.stream
@@ -505,7 +505,6 @@ class Engine:
                 time.sleep(0.003)
                 continue
             last_id, last_ui, last_draw = seq, ui, now
-            t0 = time.time()
             frame = None
             if cur is not None:
                 try:
@@ -543,15 +542,20 @@ class Engine:
                     self.dev.wake()                  # likely the display slept -> black
                 except Exception:
                     pass
-                if not self.drm:                     # go-ios mode: respawn the stale stream
-                    try:
+                try:
+                    if not self.drm:                 # go-ios mode: respawn the stale stream
                         self.stream.stop()
-                        self._owned = ensure_stream_server()
+                        self._own_stream()
                         self.stream = MJPEGStream(STREAM_URL)
                         self.stream.start()
                         self.source = self.stream
-                    except Exception as e:  # noqa: BLE001
-                        self._set("heal failed: %s" % e)
+                    else:                            # TURBO on: restart the stalled frida source
+                        self.frida_src.stop()
+                        self.frida_src = FridaSource(self.dev)
+                        self.frida_src.start()
+                        self.source = self.frida_src
+                except Exception as e:  # noqa: BLE001
+                    self._set("heal failed: %s" % e)
                 self._last_frame = time.time()
 
     # ---- input (TOP-LEFT window coords from the backend) ----
@@ -685,6 +689,17 @@ class Engine:
         elif chars.isprintable():
             self.typebuf += chars
 
+    def _own_stream(self):
+        """Start a fresh go-ios stream and adopt its process — reaping the previous one first
+        so repeated TURBO-off / self-heal cycles don't pile up unwaited child handles."""
+        if self._owned is not None:
+            try:
+                self._owned.terminate()
+                self._owned.wait(timeout=2)
+            except Exception:
+                pass
+        self._owned = ensure_stream_server()
+
     def shutdown(self):
         for src in (self.stream, self.frida_src):
             try:
@@ -694,6 +709,7 @@ class Engine:
         if self._owned is not None:
             try:
                 self._owned.terminate()
+                self._owned.wait(timeout=2)
             except Exception:
                 pass
 

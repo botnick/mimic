@@ -91,7 +91,8 @@ class IOSDevice:
         self._sb = None          # SpringBoard session
         self._sb_api = None
         self._fg = None          # (pid, session, api) cache for foreground app
-        self._tel_api = None      # telephony/TTS session (tel.js in SpringBoard)
+        self._tel_api = None      # telephony/TTS exports (tel.js in SpringBoard)
+        self._tel_sess = None     # the frida session backing _tel_api (so close() can detach it)
         self._keepalive: Optional[subprocess.Popen] = None
 
     # ------------------------------------------------------------------ frida
@@ -511,7 +512,7 @@ class IOSDevice:
             s = self.dev.attach("SpringBoard")
             sc = s.create_script(open(TEL_JS).read())
             sc.load()
-            self._tel_api = sc.exports_sync
+            self._tel_sess, self._tel_api = s, sc.exports_sync
         return self._tel_api
 
     def speak(self, text: str, lang: str = "th-TH", rate: float = 0.48) -> dict:
@@ -907,14 +908,13 @@ class IOSDevice:
         """Release every frida session this controller opened, plus the held SSH/expect
         keepalive process. Called on hot-reload (server.dev) so edits don't pile up leaked
         sessions and orphaned keepalive processes."""
-        for sess in (self._fg[1] if self._fg else None, self._sb):
+        for sess in (self._fg[1] if self._fg else None, self._sb, self._tel_sess):
             try:
                 if sess is not None:
                     sess.detach()
             except Exception:
                 pass
-        # the telephony script lives in its own SpringBoard session; drop the cached api
-        self._sb = self._sb_api = self._fg = self._tel_api = None
+        self._sb = self._sb_api = self._fg = self._tel_api = self._tel_sess = None
         try:
             if self._keepalive is not None:
                 self._keepalive.terminate()

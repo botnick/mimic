@@ -89,10 +89,6 @@ function wakeScreen(){
   try{ ObjC.classes.SBBacklightController.sharedInstance().turnOnScreenFullyWithBacklightSource_(0); return 1; }
   catch(e){ try{ var f=sym('SpringBoardServices','SBSUndimScreen'); if(f){ new NativeFunction(f,'void',[])(); return 1; } }catch(e2){} return {err:''+e}; }
 }
-function unlockScreen(){
-  try{ ObjC.classes.SBLockScreenManager.sharedInstance().unlockUIFromSource_withOptions_(0, NULL); return 1; }
-  catch(e){ return {err:''+e}; }
-}
 // --- SSLKillSwitch3 control (NyaMisty) -------------------------------------
 // The tweak reads `shouldDisableCertificateValidation` straight from its prefs
 // FILE at each hooked process's init (no Darwin notification), so we read/write
@@ -525,7 +521,6 @@ rpc.exports = {
   launch: function(b){ return launchApp(b); },
   keepAwake: function(){ return keepAwake(); },
   wake: function(){ var r=null; ObjC.schedule(ObjC.mainQueue,function(){r=wakeScreen();}); var n=0; while(r===null&&n<200){Thread.sleep(0.01);n++;} return r; },
-  unlock: function(){ var r=null; ObjC.schedule(ObjC.mainQueue,function(){r=unlockScreen();}); var n=0; while(r===null&&n<200){Thread.sleep(0.01);n++;} return r; },
   // Wake + actually land past the lock screen. On iOS 16.7 unlockUIFromSource: reports
   // success but doesn't always tear down the lock UI, so we follow it with a Home press
   // (what really dismisses to the home screen on a no-passcode device) and re-check
