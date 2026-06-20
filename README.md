@@ -142,7 +142,7 @@ stock macOS `python3`.
 
 ---
 
-## The 39 tools
+## The 38 tools
 
 | Tool | Arguments | What it does |
 |---|---|---|
@@ -178,7 +178,6 @@ stock macOS `python3`.
 | `mimic_diag` | `op`,`keys?` | Device reads: `disk` space / `gestalt` keys / `diag` IORegistry dump. |
 | `mimic_monitor` | `seconds?` | Sample system CPU load (avg + last %) over N seconds. |
 | `mimic_lang` | `lang?`,`locale?` | Read or set the device language / locale. |
-| `mimic_webjs` | `op`,`page?`,`expr?`,`url?` | Run JS in Safari/WebView pages via WebInspector: `list` / `eval` / `open`. |
 | `mimic_forward` | `op`,`host_port?`,`device_port?` | Forward a host TCP port to a device port (like iproxy): `start` / `stop` / `status`. |
 
 `mimic_tap` and `mimic_type` are coordinate-free: they resolve a label from your most
@@ -186,7 +185,7 @@ recent `mimic_look`, so they stay correct even as the layout shifts.
 
 The go-ios-backed tools (`mimic_profile` … `mimic_forward`, plus info/battery/location/etc.)
 talk to the device over USB/lockdown, independent of frida — so they work even on apps that
-reject a frida attach. WebInspector tools need Settings → Safari → Advanced → Web Inspector on.
+reject a frida attach.
 
 ### A typical session
 

@@ -209,7 +209,6 @@ one, explain the wall rather than experimenting:
 | `mimic_diag` | `op:disk` (storage) / `gestalt` (`keys[]`, e.g. SerialNumber) / `diag` (IORegistry dump). |
 | `mimic_monitor` | Sample system CPU load (avg + last %) over `seconds`. |
 | `mimic_lang` | Read language/locale; set with `lang` and/or `locale`. |
-| `mimic_webjs` | JS in Safari/WebView via WebInspector: `op:list` / `eval` (`page`,`expr`) / `open` (`url`). Needs Web Inspector ON. |
 | `mimic_forward` | Forward a host TCP port to a device port (iproxy-style): `op:start` (`host_port`,`device_port`) / `stop` / `status`. |
 
 ## SSL pinning bypass (SSLKillSwitch3)
@@ -304,12 +303,11 @@ These wrap the bundled go-ios binary (lockdown / instruments over USB — no fri
   baseband), or the IORegistry `diag` dump.
 - **`mimic_monitor`** — quick CPU-load sample (avg + last %) over a few seconds.
 - **`mimic_lang`** — read or change the device language/locale.
-- **`mimic_webjs`** — run JavaScript inside Safari / WebView pages over WebInspector
-  (`list` pages → `eval` JS in one → or `open` a URL). Needs Settings → Safari → Advanced →
-  Web Inspector ON; great for reading/poking a web app's DOM from outside.
 - **`mimic_forward`** — forward a host TCP port to a device port (reach an on-device service
   from the Mac, like `iproxy`).
 
-Note: go-ios `httpproxy` needs a supervised `--p12file` cert, so for MITM prefer `mimic_mitm`
-(or `mimic_ssl` pinning bypass) + a manually-set proxy. `mimic_profile add` can install a
-proxy/CA `.mobileconfig` if you do want a profile-based proxy.
+Note: go-ios `httpproxy` needs a supervised `--p12file` cert and a global-proxy `.mobileconfig`
+is supervised-only too, so on this non-supervised jailbroken device an automatic system proxy
+isn't installable. For MITM set the Wi-Fi HTTP proxy by hand once, then use `mimic_mitm` +
+`mimic_ssl`/`mimic_unpin`. (A Safari WebInspector `mimic_webjs` tool was prototyped and dropped —
+it needs Settings → Safari → Advanced → Web Inspector toggled on, so it isn't reliable.)

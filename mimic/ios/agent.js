@@ -38,7 +38,7 @@ function digitizer(nx, ny, down){
   IOHIDEventSystemClientDispatchEvent(client, parent);
   CFRelease(finger); CFRelease(parent);
 }
-function sleepMs(ms){ var t=Date.now(); while(Date.now()-t<ms){} }
+function sleepMs(ms){ Thread.sleep(Math.max(0, ms) / 1000); }  // real sleep, not a CPU busy-spin
 
 function swipe(x1,y1,x2,y2,ms){
   var steps=Math.max(8, Math.round((ms||300)/16));
@@ -52,15 +52,6 @@ function consumerKey(usage){
   IOHIDEventSystemClientDispatchEvent(client, d); CFRelease(d);
   var u = IOHIDEventCreateKeyboardEvent(NULL, machTime(), 0x0C, usage, 0, 0);
   IOHIDEventSystemClientDispatchEvent(client, u); CFRelease(u);
-}
-function shot(){
-  var s=sym('UIKitCore','_UICreateScreenUIImage'), p=sym('UIKitCore','UIImagePNGRepresentation');
-  var mk=new NativeFunction(s,'pointer',[]), png=new NativeFunction(p,'pointer',['pointer']);
-  var img=mk(); var d=png(img); var nd=new ObjC.Object(d);
-  var len=nd.length().valueOf();
-  var b64sym=sym(null,'objc_msgSend'); // use ObjC base64
-  var b64 = nd.base64EncodedStringWithOptions_(0).toString();
-  return {w:W,h:H,png_b64:b64};
 }
 
 function appList(){
@@ -552,7 +543,6 @@ rpc.exports = {
   // a short press (lock, not power-off). consumerKey is lightweight HID dispatch, so it
   // is safe (home has used it all along) — unlike digitizer taps it isn't a dead-end.
   hwkey: function(usage){ ObjC.schedule(ObjC.mainQueue,function(){consumerKey(usage);}); return true; },
-  shot: function(){ var out=null; ObjC.schedule(ObjC.mainQueue,function(){ try{out=shot();}catch(e){out={err:''+e};} }); var n=0; while(out===null&&n<200){ Thread.sleep(0.01); n++; } return out; },
   // video: runs on the frida thread (off main) so the UI keeps animating while we capture
   recRun: function(dir, fps, secs, q){ return recRun(dir, fps, secs, q); },
   frame: function(q){ try { return rsFrameB64(q); } catch(e){ return null; } },

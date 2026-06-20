@@ -246,9 +246,6 @@ class IOSDevice:
     def wake(self):
         return self._springboard().wake()
 
-    def unlock(self):
-        return self._springboard().unlock()
-
     def wake_unlock(self):
         """Wake + reliably dismiss the lock screen (no-passcode). Lands on home if
         locked; no-op if already unlocked. See agent.js wakeUnlock for why a plain
@@ -544,7 +541,7 @@ class IOSDevice:
 
     def call_and_speak(self, number: str, text: str, lang: str = "th-TH",
                        rate: float = 0.48, answer_timeout: float = 40.0,
-                       hang_after: bool = False, pitch: float = 1.0) -> dict:
+                       hang_after: bool = True, pitch: float = 1.0) -> dict:
         """Place a call; once the callee ANSWERS, speak `text` straight into the
         call's telephony UPLINK via AVSpeechSynthesizer.mixToTelephonyUplink (the
         official iOS API) so the callee hears it. Fully on-device — no
@@ -575,6 +572,9 @@ class IOSDevice:
             return {"ok": 0, "stage": "attach", "error": str(e), "answered": True}
         r = ic.speak_uplink(text, lang, rate, pitch)
         if isinstance(r, dict) and r.get("err"):
+            if hang_after:                      # don't leave a live call dangling on error
+                try: api.hangup()
+                except Exception: pass
             try: sess.detach()
             except Exception: pass
             return {"ok": 0, "stage": "speak", "error": r["err"], "answered": True}
@@ -619,12 +619,6 @@ class IOSDevice:
         except Exception:
             return None
 
-    def app_screenshot_b64(self) -> Optional[str]:
-        ident, api = self._foreground()
-        if api is None:
-            return None
-        o = api.shot()
-        return o.get("png_b64") if isinstance(o, dict) else None
 
     # --------------------------------------------------- go-ios extras (USB, no frida)
     # Thin wrappers over the bundled go-ios binary for capabilities the frida path
@@ -888,32 +882,10 @@ class IOSDevice:
         return {"ok": 1, "gpx": path, "pid": p.pid,
                 "note": "moving along route; mimic_location reset=true to stop"}
 
-    def web_js(self, op: str = "list", page: str = "", expr: str = "",
-               url: str = "", timeout: float = 8.0) -> dict:
-        """Run JavaScript in Safari / WebView pages over the WebInspector (needs Settings →
-        Safari → Advanced → Web Inspector ON). op=list shows inspectable pages with their
-        ids; op=eval runs `expr` in page id `page` and returns the result; op=open navigates
-        Safari to `url`."""
-        to = ["--timeout=%d" % int(timeout)]
-        if op == "list":
-            return self._goios(["webinspector", "list"] + to, timeout=int(timeout) + 5)
-        if op == "eval":
-            if not (page and expr):
-                return {"ok": 0, "error": "eval needs page=<id> + expr=<js> (page ids from op=list)"}
-            return self._goios(["webinspector", "eval", page, expr] + to,
-                               timeout=int(timeout) + 5, parse_json=False)
-        if op == "open":
-            if not url:
-                return {"ok": 0, "error": "open needs url="}
-            return self._goios(["webinspector", "launch", url] + to,
-                               timeout=int(timeout) + 5, parse_json=False)
-        return {"ok": 0, "error": "op must be list|eval|open"}
-
     def port_forward(self, op: str = "status", host_port: int = 0, device_port: int = 0) -> dict:
         """Forward a host TCP port to a device port (talk to an on-device service from the
         Mac — like iproxy). op=start runs it in the background; op=stop tears it down;
         op=status reports it. One mapping at a time."""
-        import signal
         pidf = "/tmp/mimic_fwd.pid"
 
         def running():
@@ -933,16 +905,7 @@ class IOSDevice:
                 pass
             return {"running": bool(pid), "pid": pid, "mapping": map_}
         if op == "stop":
-            pid = running()
-            if pid:
-                try:
-                    os.killpg(os.getpgid(pid), signal.SIGTERM)
-                except Exception:
-                    try: os.kill(pid, signal.SIGTERM)
-                    except Exception: pass
-            try: os.remove(pidf)
-            except Exception: pass
-            return {"ok": 1, "stopped": bool(pid)}
+            return {"ok": 1, "stopped": self._kill_pidfile(pidf)}
         if op == "start":
             if not (host_port and device_port):
                 return {"ok": 0, "error": "start needs host_port + device_port"}
@@ -974,9 +937,20 @@ class IOSDevice:
         return killed
 
     def close(self):
+        """Release every frida session this controller opened, plus the held SSH/expect
+        keepalive process. Called on hot-reload (server.dev) so edits don't pile up leaked
+        sessions and orphaned keepalive processes."""
+        for sess in (self._fg[1] if self._fg else None, self._sb):
+            try:
+                if sess is not None:
+                    sess.detach()
+            except Exception:
+                pass
+        # the telephony script lives in its own SpringBoard session; drop the cached api
+        self._sb = self._sb_api = self._fg = self._tel_api = None
         try:
-            if self._fg:
-                self._fg[1].detach()
+            if self._keepalive is not None:
+                self._keepalive.terminate()
         except Exception:
             pass
 

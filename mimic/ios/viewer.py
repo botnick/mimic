@@ -52,7 +52,7 @@ P = {
     "bg": (10, 11, 15), "panel": (18, 20, 32), "body": (14, 15, 21),
     "body_edge": (58, 63, 75), "bevel": (32, 36, 46), "screen_bg": (0, 0, 0),
     "nub": (23, 26, 33), "nub_edge": (51, 56, 69), "btn": (28, 31, 43),
-    "btn_on": (10, 132, 255), "accent": (10, 132, 255), "green": (48, 209, 88),
+    "accent": (10, 132, 255), "green": (48, 209, 88),
     "amber": (255, 159, 10), "red": (255, 69, 58), "text": (242, 243, 247),
     "dim": (135, 141, 158), "icon": (214, 218, 230),
     "hair": (38, 42, 55), "btn_hi": (45, 50, 65), "text2": (205, 210, 222),
@@ -211,7 +211,7 @@ def _rail_btn(d, bx0, by0, bx1, by1, name, lit):
     d.text((cx - tw / 2, by1 - 16), lbl, font=F_BTN, fill=tx + (255,))
 
 
-def compose(W, H, frame, *, status, conn, boxes_on, nub_hi, typebuf, fps=0, ms=0, flash=None, drm_on=False):
+def compose(W, H, frame, *, status, conn, boxes_on, nub_hi, typebuf, fps=0, flash=None, drm_on=False):
     img = Image.new("RGBA", (W, H), P["bg"] + (255,))
     d = ImageDraw.Draw(img)
 
@@ -299,6 +299,7 @@ class MJPEGStream(threading.Thread):
 
     def run(self):
         while self.alive:
+            resp = None
             try:
                 resp = urlopen(self.url, timeout=10)
                 self.connected, self.error = True, None
@@ -320,6 +321,13 @@ class MJPEGStream(threading.Thread):
             except Exception as e:  # noqa: BLE001
                 self.connected, self.error = False, str(e)
                 time.sleep(1.0)
+            finally:
+                # close the response each cycle so a reconnect doesn't leak the socket/fd
+                try:
+                    if resp is not None:
+                        resp.close()
+                except Exception:
+                    pass
 
     def stop(self):
         self.alive = False
@@ -393,7 +401,7 @@ class Engine:
         self.elements, self.boxes = [], False
         self.status, self.conn = "starting…", "connecting"
         self.typebuf = ""
-        self.fps, self.lat_ms = 0, 0
+        self.fps = 0
         self.wh = (0, 0)
         self.next_pil = None
         self._jobs = queue.Queue()
@@ -456,17 +464,18 @@ class Engine:
         return app
 
     def toggle_drm(self):
-        """Switch capture source: CARenderServer (frida, fast + DRM-bypass) <-> go-ios MJPEG."""
+        """Switch capture source: CARenderServer (frida, high-fps) <-> go-ios MJPEG.
+        TURBO is about frame rate, not DRM — both respect the secure flag."""
         self.drm = not self.drm
         if self.drm:
             if not self.frida_src.is_alive():
                 self.frida_src = FridaSource(self.dev)
                 self.frida_src.start()
             self.source = self.frida_src
-            self._set("TURBO ON · CARenderServer (fast + DRM-bypass)")
+            self._set("TURBO ON · CARenderServer (high-fps)")
         else:
             if not self.stream.is_alive():
-                ensure_stream_server()
+                self._owned = ensure_stream_server()   # own the go-ios proc so shutdown can kill it
                 self.stream = MJPEGStream(STREAM_URL)
                 self.stream.start()
             self.source = self.stream
@@ -506,13 +515,12 @@ class Engine:
             try:
                 img, hit = compose(W, H, frame, status=self.status, conn=self.conn,
                                    boxes_on=self.boxes, nub_hi=self._nub_hi,
-                                   typebuf=self.typebuf, fps=self.fps, ms=self.lat_ms,
+                                   typebuf=self.typebuf, fps=self.fps,
                                    flash=flash, drm_on=self.drm)
                 self._hit = hit
                 self.next_pil = img
             except Exception:
                 continue
-            self.lat_ms = int(self.lat_ms * 0.7 + (time.time() - t0) * 1000 * 0.3)
             cnt += 1
             if now - t_fps >= 0.5:
                 self.fps = int(round(cnt / (now - t_fps)))
@@ -538,7 +546,7 @@ class Engine:
                 if not self.drm:                     # go-ios mode: respawn the stale stream
                     try:
                         self.stream.stop()
-                        ensure_stream_server()
+                        self._owned = ensure_stream_server()
                         self.stream = MJPEGStream(STREAM_URL)
                         self.stream.start()
                         self.source = self.stream
@@ -644,12 +652,6 @@ class Engine:
             return lx / SW, ly / SH
         return None
 
-    def _swipe(self, f1, f2):
-        w, h = SCREEN_PX
-        self.dev.swipe(int(f1[0] * w), int(f1[1] * h), int(f2[0] * w), int(f2[1] * h), 250)
-        time.sleep(0.35)
-        return self._look()
-
     def _tap(self, frac):
         if not self.elements:
             self._look()
@@ -684,10 +686,11 @@ class Engine:
             self.typebuf += chars
 
     def shutdown(self):
-        try:
-            self.stream.stop()
-        except Exception:
-            pass
+        for src in (self.stream, self.frida_src):
+            try:
+                src.stop()
+            except Exception:
+                pass
         if self._owned is not None:
             try:
                 self._owned.terminate()
@@ -775,6 +778,14 @@ def run_appkit(engine):
                 self._last = id(pil)
                 self._view.setImage_(pil_to_nsimage(pil))
 
+        # NSApplication delegate hook: release the stream threads + go-ios process on quit
+        # (Quit Mimic / window close), so macOS doesn't leak them like the Tk path avoids.
+        def applicationWillTerminate_(self, note):
+            try:
+                self._eng.shutdown()
+            except Exception:
+                pass
+
     app = NSApplication.sharedApplication()
     app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
     # proper app menu (Mimic ▸ Hide / Quit) instead of the bare default
@@ -805,6 +816,7 @@ def run_appkit(engine):
     win.makeKeyAndOrderFront_(None)
     app.activateIgnoringOtherApps_(True)
     pump = Pump.alloc().initWith_view_(engine, view)
+    app.setDelegate_(pump)                  # applicationWillTerminate_ -> engine.shutdown()
     NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(0.016, pump, "tick:", None, True)
     app.run()
 
