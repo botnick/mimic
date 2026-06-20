@@ -12,7 +12,7 @@ hardware.
 MCP client
    │  stdio, newline-delimited JSON-RPC 2.0
    ▼
-mimic/server.py            tool list + dispatch (37 tools). No SDK; plain Python.
+mimic/server.py            tool list + dispatch (36 tools). No SDK; plain Python.
    │
    ▼
 mimic/ios/device.py        IOSDevice — the controller. Owns the connections.
@@ -28,7 +28,7 @@ Two transports, split by what each is good at:
 
 - **go-ios** speaks usbmux and lockdown over the USB cable. It launches apps, grabs a
   real screenshot, lists installed apps, and powers Mimic's device-info, battery, process,
-  GPS point-spoof, pcap/syslog, app-install and file-container tools — plus the later batch:
+  GPS point-spoof, pcap/syslog, and app install/uninstall — plus the later batch:
   process-kill, device-condition simulation (slow network / thermal), crash reports, low-level
   diag reads (disk / MobileGestalt), CPU-load sampling, language/locale, and host↔device port
   forwarding. All over USB, nothing injected — so they keep working on apps that reject a

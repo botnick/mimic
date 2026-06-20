@@ -675,17 +675,6 @@ class IOSDevice:
     def uninstall_app(self, bundle: str) -> dict:
         return self._goios(["uninstall", bundle], timeout=60, parse_json=False)
 
-    def files(self, op: str, bundle: str, src: str = "", dst: str = "", path: str = "/") -> dict:
-        """App-container file ops via go-ios fsync. op: tree | pull | push."""
-        a = ["fsync", "--app=%s" % bundle]
-        if op == "tree":
-            a += ["tree", "--path=%s" % path]
-        elif op in ("pull", "push"):
-            a += [op, "--srcPath=%s" % src, "--dstPath=%s" % dst]
-        else:
-            return {"ok": 0, "error": "op must be tree|pull|push"}
-        return self._goios(a, timeout=180, parse_json=(op == "tree"))
-
     def _timed_capture(self, args: list[str], out: str, seconds: float, binary: bool) -> dict:
         with open(out, "wb" if binary else "w") as f:
             p = subprocess.Popen([GOIOS] + args, stdout=f, stderr=subprocess.DEVNULL)

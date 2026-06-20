@@ -162,12 +162,6 @@ TOOLS = [
     {"name": "mimic_uninstall",
      "description": "Uninstall an app by bundle id.",
      "inputSchema": {"type": "object", "required": ["bundle"], "properties": {"bundle": {"type": "string"}}}},
-    {"name": "mimic_files",
-     "description": "App-container file ops via go-ios fsync. op=tree lists files under path; op=pull copies device src -> local dst; op=push copies local src -> device dst. Requires the app's bundle id.",
-     "inputSchema": {"type": "object", "required": ["op", "bundle"], "properties": {
-         "op": {"type": "string", "enum": ["tree", "pull", "push"]},
-         "bundle": {"type": "string"}, "src": {"type": "string"}, "dst": {"type": "string"},
-         "path": {"type": "string", "description": "for op=tree (default /)"}}}},
     {"name": "mimic_memlimit",
      "description": "Lift the jetsam memory limit for a process (keeps frida-heavy targets from being killed).",
      "inputSchema": {"type": "object", "required": ["process"], "properties": {"process": {"type": "string"}}}},
@@ -283,9 +277,6 @@ def call_tool(name, args):
         return [text(json.dumps(d.install_app(args["path"]), ensure_ascii=False))]
     if name == "mimic_uninstall":
         return [text(json.dumps(d.uninstall_app(args["bundle"]), ensure_ascii=False))]
-    if name == "mimic_files":
-        return [text(json.dumps(d.files(args["op"], args["bundle"], args.get("src", ""),
-                                        args.get("dst", ""), args.get("path", "/")), ensure_ascii=False))]
     if name == "mimic_memlimit":
         return [text(json.dumps(d.mem_unlimit(args["process"]), ensure_ascii=False))]
     if name == "mimic_assistivetouch":

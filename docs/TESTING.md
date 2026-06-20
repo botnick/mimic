@@ -57,8 +57,12 @@ in the abstract. If something is shaky or flat-out doesn't work, it's here too.
   blacks out FairPlay video and screenshot-protected apps (verified on buydrm.com — Safari's
   UI captures, only the FairPlay video is excluded).
 - **go-ios extras**: device info / battery / process list, GPS spoof, packet capture
-  (`.pcap`) and syslog, app install/uninstall, app-container file pull — the reads plus GPS,
-  pcap and syslog confirmed on hardware.
+  (`.pcap`) and syslog — all confirmed on hardware. App install/uninstall dispatch and the
+  installation-lookup service are up (app listing works), but a real install round-trip
+  wasn't exercised (no test `.ipa`). **App-container file access (go-ios `fsync`) does NOT
+  work on this device** — every app returns `InstallationLookupFailed` from the house_arrest
+  AFC service (the same developer-services rejection that kills WDA), so the `mimic_files`
+  tool was removed rather than shipped broken.
 - **More go-ios USB tools** (added later) — each one exercised on the iPhone 8 over USB and
   checked for a real effect, not just a zero exit code:
   - `mimic_diag` — disk space + MobileGestalt (serial/model) + IORegistry diagnostics, real data.

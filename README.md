@@ -47,12 +47,12 @@ doc explains why). What's left is a hybrid that is boring and reliable:
 | Press hardware buttons (Vol±, Mute, Power/Lock, Home) | `mimic_button` | works |
 | Device info / battery / running processes | `mimic_info`, `mimic_battery`, `mimic_ps` | works |
 | Spoof GPS · capture pcap / syslog | `mimic_location`, `mimic_pcap`, `mimic_syslog` | works |
-| Install / uninstall / pull app-container files | `mimic_install`, `mimic_uninstall`, `mimic_files` | works |
+| Install / uninstall an app | `mimic_install`, `mimic_uninstall` | dispatch + installation service up (real round-trip not exercised — no test `.ipa` on hand) |
 | Lift jetsam memory limit · toggle AssistiveTouch | `mimic_memlimit`, `mimic_assistivetouch` | works |
 | Kill app · crash reports · diag · CPU load · lang · port-forward | `mimic_kill`, `mimic_crash`, `mimic_diag`, `mimic_monitor`, `mimic_lang`, `mimic_forward` | works (USB; `forward` verified by reading the device SSH banner through the tunnel) |
 | Simulate slow-network / thermal condition | `mimic_devicestate` | works (verified: the profile shows IsActive after `enable`) |
 
-37 tools, each exercised on the reference device (details + what was actually observed in
+36 tools, each exercised on the reference device (details + what was actually observed in
 [docs/TESTING.md](docs/TESTING.md)). There is also a **[live viewer](#live-viewer)** — a
 native desktop window that mirrors the phone at up to ~60 fps and lets you click / type /
 swipe it like scrcpy.
@@ -145,7 +145,7 @@ stock macOS `python3`.
 
 ---
 
-## The 37 tools
+## The 36 tools
 
 | Tool | Arguments | What it does |
 |---|---|---|
@@ -172,7 +172,6 @@ stock macOS `python3`.
 | `mimic_location` | `lat`,`lon` / `reset` | Spoof the GPS to a point, or reset to the real location. |
 | `mimic_pcap` · `mimic_syslog` | `seconds?`, … | Capture device packets (.pcap) / syslog for N seconds. |
 | `mimic_install` · `mimic_uninstall` | `path` · `bundle` | Sideload an .ipa/.app / remove an app. |
-| `mimic_files` | `op`,`bundle`,… | App-container files: `tree` / `pull` / `push`. |
 | `mimic_memlimit` · `mimic_assistivetouch` | `process` · `state` | Lift a process's jetsam limit / toggle AssistiveTouch. |
 | `mimic_kill` | `target` | Kill an app/process by bundle id, name, or PID. |
 | `mimic_devicestate` | `op`,`profile_type?`,`profile_id?` | Simulate conditions (slow network / thermal): `list` / `enable` / `reset`. |

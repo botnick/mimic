@@ -200,7 +200,6 @@ one, explain the wall rather than experimenting:
 | `mimic_pcap` | Capture network packets to a `.pcap` for N `seconds` (optional `process`). |
 | `mimic_syslog` | Capture device syslog to a file for N `seconds`. |
 | `mimic_install` / `mimic_uninstall` | Sideload an `.ipa`/`.app` `path` / remove by `bundle`. |
-| `mimic_files` | App-container files — `op`: tree / pull / push (`bundle`, `src`, `dst`, `path`). |
 | `mimic_memlimit` | Lift a `process`'s jetsam memory limit (keep frida targets alive). |
 | `mimic_assistivetouch` | AssistiveTouch `state`: enable / disable / toggle / get. |
 | `mimic_kill` | Kill an app/process by `target` = bundle id, process name, or PID. |
@@ -286,8 +285,6 @@ These wrap the bundled go-ios binary (lockdown / instruments over USB — no fri
   writes `dump-*.pcap`; the tool moves it to your `out` path.)
 - **`mimic_syslog`** — dump the device syslog to a file for N seconds.
 - **`mimic_install` / `mimic_uninstall`** — sideload an `.ipa`/`.app` / remove a bundle.
-- **`mimic_files`** — app-container file ops (`op`: tree / pull / push) — e.g. pull an app's
-  databases or caches out of its sandbox.
 - **`mimic_memlimit`** — lift a process's jetsam memory limit (keeps frida-heavy targets
   from being killed).
 - **`mimic_assistivetouch`** — toggle the on-screen AssistiveTouch home button.
