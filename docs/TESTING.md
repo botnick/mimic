@@ -39,6 +39,19 @@ in the abstract. If something is shaky or flat-out doesn't work, it's here too.
   through a proxy and its API calls were readable.
 - **Operating a hardened, anti-frida app.** With the gadget bypass installed, a commercial
   app that rejects a frida attach was opened, navigated, and typed into.
+- **Hardware buttons** (`mimic_button`). Volume up/down (the on-screen HUD appears), mute,
+  and power/lock (a short press locks the screen — confirmed via `isUILocked` 0→1→0). These
+  use Consumer-HID keyboard usages, a different path from the digitizer taps below.
+- **High-fps, DRM-bypassing capture** for the live viewer. A CARenderServer frame
+  (`device.frida_frame`) pulled over frida renders the composited display *below* the secure
+  layer — so DRM apps that go-ios screenshots show black come through — sustained ~25–40 fps
+  (200 frames straight with no leak after the autorelease-pool fix; see Gotchas).
+- **go-ios extras**: device info / battery / process list, GPS spoof, packet capture
+  (`.pcap`) and syslog, app install/uninstall, app-container file pull — the reads plus GPS,
+  pcap and syslog confirmed on hardware.
+- **The live viewer** (`python3 -m mimic.ios.viewer`). Mirrors the device; a click maps to
+  the nearest a11y element (home-screen icons launch their app), a drag streams a real finger
+  (digitizer down→move→up) so scrolling follows the cursor, and the rail fires hardware buttons.
 - **The one-command installer** (`setup.sh`). Brought the stack up and registered the MCP;
   re-runs cleanly.
 
@@ -66,7 +79,12 @@ doesn't burn a day rediscovering them.
 - **Discrete taps via raw `IOHIDEvent`.** Pans and scrolls dispatch fine; discrete taps
   never fire the tap gesture recognizers. Tried from SpringBoard injection and from an
   entitled, cross-compiled touch daemon — same result every time. This is why taps go
-  through accessibility instead.
+  through accessibility instead. Two more variants were checked against SimulateTouch's
+  approach: `frida attach backboardd` (where SimulateTouch injects its Substrate dylib) is
+  **refused** by the process, and `IOHIDEventCreateDigitizerFingerEventWithQuality`
+  dispatched from SpringBoard still doesn't launch an icon. Real discrete taps need a
+  persistent backboardd tweak — not reachable from frida. (Drags/scrolls do work, so the
+  viewer streams those as a live finger.)
 - **WebDriverAgent.** Installs via AppSync and the developer image mounts, but launching
   the runner fails at `house_arrest` with `InstallationLookupFailed`. Developer services
   reject the AppSync-sideloaded container. Dead on this device.
@@ -95,6 +113,11 @@ doesn't burn a day rediscovering them.
   server rebuilds its controller and reattaches.
 - **Don't `pkill ssh`.** The held SSH client is `frida-server`'s parent. Killing all SSH
   kills frida.
+- **CARenderServer capture needs a per-frame autorelease pool.** The live JPEG path creates
+  an autoreleased `UIImage` / JPEG `NSData` / base64 string each frame; without draining them
+  per frame, at 30–60 fps memory climbs until jetsam reboots the device (this actually
+  happened). Wrap each frame in an `NSAutoreleasePool` — the same thing the video recorder
+  does — and it stays flat.
 - **MCP server scope.** Registering the server at *local* scope ties it to one directory.
   If your client doesn't see it from elsewhere, register at user scope instead.
 - **The wake-then-unlock path.** On this iOS version, the unlock call reports success but

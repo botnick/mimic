@@ -20,6 +20,10 @@ mimic/ios/agent.js   The frida runtime injected into SpringBoard / the foregroun
                      and text-to-speech are all here, exported over frida RPC.
 
 mimic/ios/tel.js     A second injected runtime for telephony: dial, call state, hang up.
+
+mimic/ios/viewer.py  The live desktop viewer (AppKit on macOS, Tk on Windows/Linux).
+                     Independent of the MCP server — it imports IOSDevice directly for
+                     control and pulls frames from CARenderServer (frida) or go-ios.
 ```
 
 The flow for any capability is the same: a method on `IOSDevice` calls an RPC export in
