@@ -220,29 +220,35 @@ inspection. It works by reading/writing the tweak's own prefs file
 
 ## Live screen viewer (desktop window)
 
-To watch the phone in real time and click it like scrcpy, there is a native macOS
-window (Cocoa/AppKit — no browser; macOS ships a broken Tk 8.5 so we use AppKit). It
-shows live FPS + frame latency in the header:
+To watch the phone in real time and drive it like scrcpy, there is a native desktop
+window (no browser). It is cross-platform — macOS uses Cocoa/AppKit (the system Tk 8.5 is
+broken there), Windows/Linux use Tk — picked automatically. The header shows live FPS +
+frame latency:
 
 ```bash
-python3 -m mimic.ios.viewer      # needs:  pip install pillow pyobjc-framework-Cocoa
+python3 -m mimic.ios.viewer
+#   macOS:        pip install pillow pyobjc-framework-Cocoa
+#   Win / Linux:  pip install pillow
 ```
 
 There is also a double-clickable `Mimic.app` (built by `scripts/build_app.sh`).
 
-It mirrors the screen over USB via go-ios' MJPEG stream and renders a premium device
-frame (rounded screen, clickable side buttons). Controls reuse the SAME proven model as
-the MCP tools:
+**Two capture sources, toggled by the rail's TURBO button:**
+- **TURBO on (default) — CARenderServer over frida** (`device.frida_frame` / agent.js
+  `frame`): grabs the composited display BELOW the DRM secure layer at ~40-60 fps, so it
+  mirrors even **Netflix / banking** apps that go-ios screenshots show black. Needs the
+  display awake (the viewer keeps it awake).
+- **TURBO off — go-ios MJPEG**: ~9 fps and blacked out by DRM, but lighter on frida.
 
-- **click** a UI element → maps to the nearest accessibility element → `tap_label`
-- **drag** → `swipe`
-- **side-button nubs + the rail** → Lock / Vol± / Mute / Home (`device.button()`)
-- **type box** → `type_text`; **A11Y** toggle overlays the tappable elements
+Controls (the SAME proven model as the MCP tools):
+- **click** a UI element → nearest accessibility element → `tap_label`. Home-screen icons
+  launch their app (tap_label falls back to SpringBoard there); in-app controls activate.
+- **drag** → `swipe`; **labelled rail** → Lock / Vol± / Mute / Home / Look / A11y, each
+  with a press flash; **type** while focused, Enter sends.
 
-Same wall as `mimic_tap`: custom-drawn views with no a11y element still can't be tapped
-(clicks map to the nearest *known* element). The viewer auto-starts its own go-ios MJPEG
-server on port 3333 if one isn't already running, and the whole device frame is composited
-with Pillow, so the MCP server itself stays Frida-only (Pillow is an optional extra).
+Same wall as `mimic_tap`: custom-drawn views with no a11y element still can't be tapped.
+The viewer **self-heals** (restarts a stalled source, keeps the display awake) and the
+device frame is composited with Pillow, so the MCP server itself stays Frida-only.
 
 ## go-ios extras (USB tools beyond frida)
 

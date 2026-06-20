@@ -255,6 +255,7 @@ class MJPEGStream(threading.Thread):
         super().__init__(daemon=True)
         self.url, self.latest, self.alive = url, None, True
         self.connected, self.error = False, None
+        self.seq = 0
 
     def run(self):
         while self.alive:
@@ -272,6 +273,7 @@ class MJPEGStream(threading.Thread):
                         start = buf.rfind(b"\xff\xd8", 0, end)
                         if start != -1:
                             self.latest = buf[start:end + 2]
+                            self.seq += 1
                             buf = buf[end + 2:]
                     if len(buf) > 4_000_000:
                         buf = buf[-1_000_000:]
@@ -317,6 +319,7 @@ class FridaSource(threading.Thread):
         super().__init__(daemon=True)
         self.dev, self.q = dev, quality
         self.latest, self.alive, self.connected, self.error = None, True, False, None
+        self.seq = 0
 
     def run(self):
         while self.alive:
@@ -324,6 +327,7 @@ class FridaSource(threading.Thread):
                 b = self.dev.frida_frame(self.q)
                 if b:
                     self.latest = b
+                    self.seq += 1
                     self.connected = True
                     time.sleep(0.006)               # ~ leave frida headroom for taps
                 else:
@@ -438,16 +442,17 @@ class Engine:
             self.conn = ("live" if self.source.connected
                          else "error" if self.source.error else "connecting")
             cur = self.source.latest
+            seq = self.source.seq
             now = time.time()
-            if cur is not None and id(cur) != self._fid:
-                self._fid = id(cur)
+            if seq != self._fid:
+                self._fid = seq
                 self._last_frame = now
             flash = self._flash[0] if (self._flash and now < self._flash[1]) else None
             ui = (self.status, self._nub_hi, self.boxes, self.typebuf, self.conn, flash, self.drm, W, H)
-            if id(cur) == last_id and ui == last_ui and now - last_draw < 0.2:
+            if seq == last_id and ui == last_ui and now - last_draw < 0.2:
                 time.sleep(0.003)
                 continue
-            last_id, last_ui, last_draw = id(cur), ui, now
+            last_id, last_ui, last_draw = seq, ui, now
             t0 = time.time()
             frame = None
             if cur is not None:

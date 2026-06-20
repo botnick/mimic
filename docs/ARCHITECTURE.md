@@ -27,8 +27,9 @@ mimic/ios/device.py        IOSDevice — the controller. Owns the connections.
 Two transports, split by what each is good at:
 
 - **go-ios** speaks usbmux and lockdown over the USB cable. It launches apps, grabs a
-  real screenshot, and lists installed apps without needing anything injected. No frida
-  required for those.
+  real screenshot, lists installed apps, and powers Mimic's device-info, battery, process,
+  GPS-spoof, pcap/syslog, app-install and file-container tools — all without anything
+  injected. No frida required for those.
 - **frida-server** is a signed binary running on the phone, reachable over a USB-forwarded
   port. Anything that has to reach inside a live process — walking the view hierarchy,
   firing a control action, setting a text field, recording the screen, speaking into a
@@ -51,6 +52,9 @@ hierarchy, finds the element whose label matches, and fires its action directly:
   `didSelectRowAtIndexPath:` / `didSelectItemAtIndexPath:`.
 - Otherwise it falls back to `accessibilityActivate()`.
 
+On the home screen there is no foreground app, so the same lookup runs against SpringBoard
+instead — which is why tapping an app icon activates it and launches the app.
+
 `mimic_look` returns those elements with on-screen coordinates so a human (or a model)
 can reason about layout, but the coordinates are informational. The tap is dispatched by
 identity, not by pixel, which is why it stays robust when things move around.
@@ -70,6 +74,11 @@ landed in the same place.
 
 So tapping goes through accessibility instead, and that is why it works. The cost is the
 edge cases below.
+
+**Hardware buttons are a different path and do work.** Volume, mute, power/lock and Home
+are not digitizer touches — they are Consumer-page `IOHIDEvent` keyboard usages dispatched
+from SpringBoard (`agent.js` `consumerKey` / `hwkey`, exposed as `mimic_button`).
+SpringBoard consumes those directly, so unlike synthetic taps they fire reliably.
 
 ## Why not WebDriverAgent
 
@@ -118,6 +127,27 @@ baseband, not in any software buffer you can read or write. That is measured, no
 (see [TESTING.md](TESTING.md)). `mixToTelephonyUplink` is the one supported door into the
 uplink, and it only carries `AVSpeechSynthesizer` output, which is why arbitrary audio
 files cannot be injected into a cellular call.
+
+## Screen capture and the live viewer
+
+There are two ways Mimic gets pixels off the phone, and they trade speed against DRM:
+
+- **go-ios screenshot / MJPEG stream.** Fast, no injection — but it goes through the
+  official screenshot service, which honours the per-window *secure* flag. DRM apps
+  (Netflix, banking) come back black, and the stream caps around 9 fps.
+- **CARenderServer over frida.** From SpringBoard, `agent.js` renders the composited
+  display into an `IOSurface` (`CARenderServerRenderDisplay`), reads it back through a
+  bitmap context, and JPEG-encodes it. This is *below* the secure-display layer, so it
+  captures DRM content, at ~40–60 fps (measured ~17 ms/frame). `mimic_record` uses it for
+  video; `device.frida_frame` exposes a single live frame.
+
+The **live viewer** (`mimic/ios/viewer.py`) is a native desktop window built on this. It
+composites a device frame with Pillow and pulls frames from either source (default
+CARenderServer; a TURBO toggle switches to go-ios). It is backend-pluggable — Cocoa/AppKit
+on macOS (the system Tk 8.5 freezes), Tkinter on Windows/Linux — and self-heals a stalled
+capture while keeping the display awake. Clicks map to the nearest accessibility element
+(tapping through the same path as `mimic_tap`), drags become swipes, and the rail fires
+`mimic_button` presses.
 
 ## Configuration
 

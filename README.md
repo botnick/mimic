@@ -1,9 +1,10 @@
 # Mimic
 
 Drive a real iPhone from an LLM the way a person would: look at the screen, open
-apps, tap, type, scroll, place a call, record a video. Mimic is a small
+apps, tap, type, scroll, press its buttons, place a call, record a video. Mimic is a small
 [Model Context Protocol](https://modelcontextprotocol.io) server that exposes those
-actions as tools, so any MCP-capable assistant can operate the phone over USB.
+actions as tools, so any MCP-capable assistant can operate the phone over USB — and a
+[live viewer](#live-viewer) lets you watch and drive it by hand.
 
 It is **accessibility-first**. Reading a screen returns a compact list of labeled
 elements (~100–200 tokens) instead of a multi-thousand-token screenshot, which keeps
@@ -41,8 +42,15 @@ doc explains why). What's left is a hybrid that is boring and reliable:
 | Speak on the device's own speaker | `mimic_speak` | works |
 | Hang up | `mimic_hangup` | works |
 | Toggle the system SSL pinning bypass | `mimic_ssl` | works |
+| Press hardware buttons (Vol±, Mute, Power/Lock, Home) | `mimic_button` | works |
+| Device info / battery / running processes | `mimic_info`, `mimic_battery`, `mimic_ps` | works |
+| Spoof GPS · capture pcap / syslog | `mimic_location`, `mimic_pcap`, `mimic_syslog` | works |
+| Install / uninstall / pull app-container files | `mimic_install`, `mimic_uninstall`, `mimic_files` | works |
+| Lift jetsam memory limit · toggle AssistiveTouch | `mimic_memlimit`, `mimic_assistivetouch` | works |
 
-Sixteen tools, all validated on hardware (details in [docs/TESTING.md](docs/TESTING.md)).
+Twenty-eight tools, all validated on hardware (details in [docs/TESTING.md](docs/TESTING.md)).
+There is also a **[live viewer](#live-viewer)** — a native desktop window that mirrors the
+phone at up to ~60 fps (DRM apps included) and lets you click / type / swipe it like scrcpy.
 
 A few of these are worth calling out because they are not obvious:
 
@@ -132,7 +140,7 @@ stock macOS `python3`.
 
 ---
 
-## The 16 tools
+## The 28 tools
 
 | Tool | Arguments | What it does |
 |---|---|---|
@@ -152,6 +160,13 @@ stock macOS `python3`.
 | `mimic_speak` | `text`, `lang?` | Speak on the device's own speaker. |
 | `mimic_hangup` | — | End the current call. |
 | `mimic_ssl` | `bypass?`, `relaunch?` | Read or toggle the SSL Kill Switch 3 pinning bypass. |
+| `mimic_button` | `button` | Press a hardware button: `home`/`volup`/`voldown`/`mute`/`power` (power = short press = lock). |
+| `mimic_info` · `mimic_battery` · `mimic_ps` | `kind?` · — · `apps?` | Device info / battery / running processes (go-ios). |
+| `mimic_location` | `lat`,`lon` or `reset` | Spoof the GPS, or reset to the real location. |
+| `mimic_pcap` · `mimic_syslog` | `seconds?`, … | Capture device packets (.pcap) / syslog for N seconds. |
+| `mimic_install` · `mimic_uninstall` | `path` · `bundle` | Sideload an .ipa/.app / remove an app. |
+| `mimic_files` | `op`,`bundle`,… | App-container files: `tree` / `pull` / `push`. |
+| `mimic_memlimit` · `mimic_assistivetouch` | `process` · `state` | Lift a process's jetsam limit / toggle AssistiveTouch. |
 
 `mimic_tap` and `mimic_type` are coordinate-free: they resolve a label from your most
 recent `mimic_look`, so they stay correct even as the layout shifts.
@@ -223,6 +238,34 @@ switch.
 
 ---
 
+## Live viewer
+
+Sometimes you want to *watch* the phone, not just read it. `mimic/ios/viewer.py` is a
+native desktop window — no browser — that mirrors the screen live and lets you drive it
+with the mouse and keyboard, like scrcpy for a jailbroken iPhone.
+
+```bash
+python3 -m mimic.ios.viewer
+#   macOS:        pip install pillow pyobjc-framework-Cocoa
+#   Win / Linux:  pip install pillow
+```
+
+It is **cross-platform** (macOS → Cocoa/AppKit, since the system Tk 8.5 is broken;
+Windows/Linux → Tk) and ships a double-clickable `Mimic.app` (`scripts/build_app.sh`).
+
+Two capture sources, toggled by the **TURBO** button in the rail:
+
+- **TURBO on (default) — CARenderServer over frida.** Grabs the composited display below
+  the DRM secure layer at ~40–60 fps, so it mirrors even **Netflix and banking apps** that
+  ordinary screenshots show as black.
+- **TURBO off — go-ios MJPEG.** ~9 fps and blacked out by DRM, but lighter on frida.
+
+Click a UI element to tap it (home-screen icons launch their app), drag to swipe, type to
+send text, and use the labelled rail for Lock / Vol± / Mute / Home. It keeps the display
+awake and self-heals a stalled capture; the header shows live FPS and frame latency.
+
+---
+
 ## The skill
 
 [`skill/mimic-ios-control`](skill/mimic-ios-control/SKILL.md) is a skill that teaches an
@@ -282,11 +325,16 @@ mimic/
   server.py            MCP server — the entry point (stdio JSON-RPC, no SDK)
   ios/
     device.py          IOSDevice — the controller (go-ios + frida hybrid)
-    agent.js           injected runtime: read screen, tap, type, swipe, video, TTS, ...
+    agent.js           injected runtime: read screen, tap, type, swipe, video, TTS,
+                       hardware buttons, CARenderServer capture, ...
     tel.js             telephony: dial, call state, hang up
+    viewer.py          live desktop viewer (AppKit on macOS, Tk on Windows/Linux)
+    icon.png           viewer app icon
 scripts/
   setup.sh             one-command bring-up
+  build_app.sh         build a double-clickable Mimic.app for the viewer
   install_gadget_bypass.sh   opt-in anti-frida bypass for one app
+assets/                viewer icon (png + icns)
 skill/
   mimic-ios-control/   the companion skill
 tools/                 bundled go-ios + signed frida-server + gadget
