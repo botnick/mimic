@@ -51,12 +51,11 @@ doc explains why). What's left is a hybrid that is boring and reliable:
 | Lift jetsam memory limit · toggle AssistiveTouch | `mimic_memlimit`, `mimic_assistivetouch` | works |
 | Kill app · crash reports · diag · CPU load · lang · port-forward | `mimic_kill`, `mimic_crash`, `mimic_diag`, `mimic_monitor`, `mimic_lang`, `mimic_forward` | works (USB; `forward` verified by reading the device SSH banner through the tunnel) |
 | Simulate slow-network / thermal condition | `mimic_devicestate` | works (verified: the profile shows IsActive after `enable`) |
-| Config profiles (list / remove) | `mimic_profile` | list/remove work; `add` only stages — needs on-device approval, supervised-only payloads rejected |
-| Spoof GPS along a moving route | `mimic_location gpx=` | starts (same developer-image path as the verified point spoof) |
 
-Thirty tools, all validated on hardware (details in [docs/TESTING.md](docs/TESTING.md)).
-There is also a **[live viewer](#live-viewer)** — a native desktop window that mirrors the
-phone at up to ~60 fps and lets you click / type / swipe it like scrcpy.
+37 tools, each exercised on the reference device (details + what was actually observed in
+[docs/TESTING.md](docs/TESTING.md)). There is also a **[live viewer](#live-viewer)** — a
+native desktop window that mirrors the phone at up to ~60 fps and lets you click / type /
+swipe it like scrcpy.
 
 A few of these are worth calling out because they are not obvious:
 
@@ -146,7 +145,7 @@ stock macOS `python3`.
 
 ---
 
-## The 38 tools
+## The 37 tools
 
 | Tool | Arguments | What it does |
 |---|---|---|
@@ -170,12 +169,11 @@ stock macOS `python3`.
 | `mimic_mitm` | `op?`, `password?` | Start/stop a built-in mitmweb proxy (web password `Aa1234`) and turn on the SSL bypass; returns the proxy address to set on the phone. |
 | `mimic_button` | `button` | Press a hardware button: `home`/`volup`/`voldown`/`mute`/`power` (power = short press = lock). |
 | `mimic_info` · `mimic_battery` · `mimic_ps` | `kind?` · — · `apps?` | Device info / battery / running processes (go-ios). |
-| `mimic_location` | `lat`,`lon` / `gpx` / `reset` | Spoof the GPS to a point, walk/drive a `.gpx` route, or reset to the real location. |
+| `mimic_location` | `lat`,`lon` / `reset` | Spoof the GPS to a point, or reset to the real location. |
 | `mimic_pcap` · `mimic_syslog` | `seconds?`, … | Capture device packets (.pcap) / syslog for N seconds. |
 | `mimic_install` · `mimic_uninstall` | `path` · `bundle` | Sideload an .ipa/.app / remove an app. |
 | `mimic_files` | `op`,`bundle`,… | App-container files: `tree` / `pull` / `push`. |
 | `mimic_memlimit` · `mimic_assistivetouch` | `process` · `state` | Lift a process's jetsam limit / toggle AssistiveTouch. |
-| `mimic_profile` | `op`,`path?`,`name?` | Configuration profiles: `list` / `add` a .mobileconfig (CA, proxy) / `remove`. |
 | `mimic_kill` | `target` | Kill an app/process by bundle id, name, or PID. |
 | `mimic_devicestate` | `op`,`profile_type?`,`profile_id?` | Simulate conditions (slow network / thermal): `list` / `enable` / `reset`. |
 | `mimic_crash` | `op`,`pattern?`,`dst?` | Crash reports: `ls` / `pull` to a folder / `clear`. |
@@ -187,7 +185,7 @@ stock macOS `python3`.
 `mimic_tap` and `mimic_type` are coordinate-free: they resolve a label from your most
 recent `mimic_look`, so they stay correct even as the layout shifts.
 
-The go-ios-backed tools (`mimic_profile` … `mimic_forward`, plus info/battery/location/etc.)
+The go-ios-backed tools (`mimic_kill` … `mimic_forward`, plus info/battery/location/etc.)
 talk to the device over USB/lockdown, independent of frida — so they work even on apps that
 reject a frida attach.
 

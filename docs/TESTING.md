@@ -72,14 +72,13 @@ in the abstract. If something is shaky or flat-out doesn't work, it's here too.
     condition actually engages, not just that the call returns.
   - `mimic_forward` — forwarded host:12222 → device:44 and read the device's real SSH banner
     (`SSH-2.0-dropbear_2022.83`) back through the tunnel, so it genuinely moves bytes.
-  - `mimic_location gpx=` — starts a moving-route session via the same `DTSimulateLocation`
-    developer-image path as the point spoof above (which is confirmed); the route start returns ok.
-  - `mimic_profile` — `list` / `remove` work. `add` only **stages** a profile over lockdown:
-    this device isn't supervised, so iOS then needs the user to approve it on-device, and a
-    global-proxy payload is rejected outright (so there's no silent system-proxy install here).
   These ride lockdown/instruments over USB, so they work even on an app that rejects a frida
-  attach. (A `mimic_webjs` WebInspector wrapper was prototyped but **removed**: it needs
-  Settings → Safari → Advanced → Web Inspector toggled on, so it didn't work out of the box.)
+  attach. **Three earlier additions were removed for not working reliably on this device:**
+  `mimic_webjs` (needs Safari Web Inspector toggled on, so it didn't work out of the box),
+  `mimic_profile` (op=add couldn't actually install a profile here — this device isn't
+  supervised, so iOS rejects a global-proxy payload and otherwise needs manual on-device
+  approval), and the `mimic_location gpx=` moving-route option (the route session started but
+  the actual on-device movement was never verified, so it was pulled — the point spoof stays).
 - **The live viewer** (`python3 -m mimic.ios.viewer`). Mirrors the device; a click maps to
   the nearest a11y element (home-screen icons launch their app), a drag streams a real finger
   (digitizer down→move→up) so scrolling follows the cursor, and the rail fires hardware buttons.

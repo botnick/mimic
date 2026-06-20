@@ -144,8 +144,7 @@ TOOLS = [
     {"name": "mimic_location",
      "description": "Spoof the device GPS. Pass lat+lon to set, or reset=true to restore the real location. Needs the developer image mounted.",
      "inputSchema": {"type": "object", "properties": {
-         "lat": {"type": "number"}, "lon": {"type": "number"}, "reset": {"type": "boolean"},
-         "gpx": {"type": "string", "description": "path to a .gpx file for a MOVING route (walk/drive sim)"}}}},
+         "lat": {"type": "number"}, "lon": {"type": "number"}, "reset": {"type": "boolean"}}}},
     {"name": "mimic_pcap",
      "description": "Capture the device's network packets to a .pcap file for N seconds (optionally filtered to one process). For traffic study.",
      "inputSchema": {"type": "object", "properties": {
@@ -175,13 +174,6 @@ TOOLS = [
     {"name": "mimic_assistivetouch",
      "description": "Manage AssistiveTouch (on-screen Home button). state: enable | disable | toggle | get.",
      "inputSchema": {"type": "object", "properties": {"state": {"type": "string", "enum": ["enable", "disable", "toggle", "get"]}}}},
-    {"name": "mimic_profile",
-     "description": "Configuration profiles (.mobileconfig). op=list shows installed profiles; op=add STAGES the profile at `path` over lockdown — on this non-supervised device iOS then requires the user to approve it on-device (Settings → Profile Downloaded), and supervised-only payloads like a global HTTP proxy are rejected; op=remove deletes the profile by `name`. list/remove are reliable; add depends on the profile type + manual approval.",
-     "inputSchema": {"type": "object", "properties": {
-         "op": {"type": "string", "enum": ["list", "add", "remove"]},
-         "path": {"type": "string", "description": "for op=add: path to .mobileconfig"},
-         "name": {"type": "string", "description": "for op=remove: profile name/identifier"},
-         "p12": {"type": "string"}, "password": {"type": "string"}}}},
     {"name": "mimic_kill",
      "description": "Kill a running app/process by bundle id (com.x.y), process name, or numeric PID. Cleaner than mimic_close for background processes.",
      "inputSchema": {"type": "object", "required": ["target"], "properties": {
@@ -278,11 +270,9 @@ def call_tool(name, args):
     if name == "mimic_location":
         if args.get("reset"):
             return [text(json.dumps(d.reset_location(), ensure_ascii=False))]
-        if args.get("gpx"):
-            return [text(json.dumps(d.route_gpx(args["gpx"]), ensure_ascii=False))]
         if "lat" in args and "lon" in args:
             return [text(json.dumps(d.set_location(args["lat"], args["lon"]), ensure_ascii=False))]
-        return [text(json.dumps({"ok": 0, "error": "pass lat+lon to set, gpx=<file> for a moving route, or reset=true"}))]
+        return [text(json.dumps({"ok": 0, "error": "pass lat+lon to set, or reset=true"}))]
     if name == "mimic_pcap":
         return [text(json.dumps(d.pcap(args.get("seconds", 10), args.get("process"),
                                        args.get("out", "/tmp/mimic.pcap")), ensure_ascii=False))]
@@ -300,10 +290,6 @@ def call_tool(name, args):
         return [text(json.dumps(d.mem_unlimit(args["process"]), ensure_ascii=False))]
     if name == "mimic_assistivetouch":
         return [text(json.dumps(d.assistive_touch(args.get("state", "get")), ensure_ascii=False))]
-    if name == "mimic_profile":
-        return [text(json.dumps(d.profiles(args.get("op", "list"), args.get("path", ""),
-                                           args.get("name", ""), args.get("p12", ""),
-                                           args.get("password", "")), ensure_ascii=False))]
     if name == "mimic_kill":
         return [text(json.dumps(d.kill_app(args["target"]), ensure_ascii=False))]
     if name == "mimic_devicestate":

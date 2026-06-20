@@ -657,7 +657,6 @@ class IOSDevice:
         return self._goios(["setlocation", "--lat=%s" % lat, "--lon=%s" % lon], parse_json=False)
 
     def reset_location(self) -> dict:
-        self._kill_pidfile("/tmp/mimic_gpx.pid")  # stop a moving GPX route if one is running
         return self._goios(["resetlocation"], parse_json=False)
 
     def assistive_touch(self, state: str = "get") -> dict:
@@ -735,26 +734,6 @@ class IOSDevice:
         return self._timed_capture(["syslog"], out, seconds, binary=False)
 
     # --- more go-ios wrappers (all USB / lockdown, no frida) ---
-    def profiles(self, op: str = "list", path: str = "", name: str = "",
-                 p12: str = "", password: str = "") -> dict:
-        """Configuration profiles. op=list; op=add installs a .mobileconfig at `path`
-        (e.g. a CA or HTTP-proxy profile — supply p12+password for a signed/identity
-        profile); op=remove deletes the profile named `name`."""
-        if op == "list":
-            return self._goios(["profile", "list"])
-        if op == "add":
-            if not path:
-                return {"ok": 0, "error": "add needs path=<.mobileconfig>"}
-            a = ["profile", "add", path]
-            if p12:
-                a += ["--p12file=%s" % p12, "--password=%s" % password]
-            return self._goios(a, parse_json=False)
-        if op == "remove":
-            if not name:
-                return {"ok": 0, "error": "remove needs name=<profileName>"}
-            return self._goios(["profile", "remove", name], parse_json=False)
-        return {"ok": 0, "error": "op must be list|add|remove"}
-
     def kill_app(self, target: str) -> dict:
         """Kill a running app/process by bundle id, process name, or numeric PID."""
         t = str(target)
@@ -869,21 +848,6 @@ class IOSDevice:
         if set_lang:
             a.append("--setlang=%s" % set_lang)
         return self._goios(a, parse_json=not (set_lang or set_locale))
-
-    def route_gpx(self, path: str) -> dict:
-        """Spoof the GPS along a MOVING route from a .gpx file (simulates walking/driving).
-        Runs in the background until mimic_location reset=true. Needs the developer image."""
-        if not os.path.exists(path):
-            return {"ok": 0, "error": "gpx file not found: " + path}
-        pidf = "/tmp/mimic_gpx.pid"
-        self._kill_pidfile(pidf)
-        p = subprocess.Popen([GOIOS, "setlocationgpx", "--gpxfilepath=%s" % path],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                             start_new_session=True)
-        with open(pidf, "w") as f:
-            f.write(str(p.pid))
-        return {"ok": 1, "gpx": path, "pid": p.pid,
-                "note": "moving along route; mimic_location reset=true to stop"}
 
     def port_forward(self, op: str = "status", host_port: int = 0, device_port: int = 0) -> dict:
         """Forward a host TCP port to a device port (talk to an on-device service from the
