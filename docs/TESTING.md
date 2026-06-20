@@ -57,9 +57,11 @@ in the abstract. If something is shaky or flat-out doesn't work, it's here too.
   blacks out FairPlay video and screenshot-protected apps (verified on buydrm.com — Safari's
   UI captures, only the FairPlay video is excluded).
 - **go-ios extras**: device info / battery / process list, GPS spoof, packet capture
-  (`.pcap`) and syslog — all confirmed on hardware. App install/uninstall dispatch and the
-  installation-lookup service are up (app listing works), but a real install round-trip
-  wasn't exercised (no test `.ipa`). **App-container file access (go-ios `fsync`) does NOT
+  (`.pcap`) and syslog — all confirmed on hardware. **`mimic_uninstall` is verified** — it
+  removed WebDriverAgent (`com.facebook.WebDriverAgentRunner.xctrunner`) for real via the
+  installation_proxy (`RemovingApplication → done`, then app-list confirmed it gone).
+  `mimic_install` dispatch works and the installation service is up, but a real install
+  round-trip wasn't exercised (no test `.ipa`). **App-container file access (go-ios `fsync`) does NOT
   work on this device** — every app returns `InstallationLookupFailed` from the house_arrest
   AFC service (the same developer-services rejection that kills WDA), so the `mimic_files`
   tool was removed rather than shipped broken.

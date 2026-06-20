@@ -47,7 +47,7 @@ doc explains why). What's left is a hybrid that is boring and reliable:
 | Press hardware buttons (Vol±, Mute, Power/Lock, Home) | `mimic_button` | works |
 | Device info / battery / running processes | `mimic_info`, `mimic_battery`, `mimic_ps` | works |
 | Spoof GPS · capture pcap / syslog | `mimic_location`, `mimic_pcap`, `mimic_syslog` | works |
-| Install / uninstall an app | `mimic_install`, `mimic_uninstall` | dispatch + installation service up (real round-trip not exercised — no test `.ipa` on hand) |
+| Install / uninstall an app | `mimic_install`, `mimic_uninstall` | `uninstall` verified (removed WebDriverAgent for real); `install` dispatch works but a real install wasn't exercised (no test `.ipa`) |
 | Lift jetsam memory limit · toggle AssistiveTouch | `mimic_memlimit`, `mimic_assistivetouch` | works |
 | Kill app · crash reports · diag · CPU load · lang · port-forward | `mimic_kill`, `mimic_crash`, `mimic_diag`, `mimic_monitor`, `mimic_lang`, `mimic_forward` | works (USB; `forward` verified by reading the device SSH banner through the tunnel) |
 | Simulate slow-network / thermal condition | `mimic_devicestate` | works (verified: the profile shows IsActive after `enable`) |
