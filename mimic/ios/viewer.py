@@ -413,7 +413,7 @@ class Engine:
         self._last_frame = time.time()
         self._fid = None
         self._last_wake = 0.0
-        self.drm = True                              # default source: CARenderServer (fast + DRM-bypass)
+        self.drm = True                              # default source: CARenderServer (high-fps, not a DRM bypass)
         self.stream = MJPEGStream(STREAM_URL)        # go-ios fallback, lazy-started
         self.frida_src = FridaSource(self.dev)       # CARenderServer source, started in _boot
         self.source = self.frida_src

@@ -57,7 +57,8 @@ returning bundle ids you can feed to `mimic_launch`. Use it instead of guessing 
 ## When to reach for a screenshot
 
 `mimic_look` reads the accessibility tree, which covers most native and standard UIKit
-apps. Use `mimic_screenshot` (a full-screen PNG via go-ios, works for *any* app) when:
+apps. Use `mimic_screenshot` (a full-screen PNG via go-ios — works on any app, but DRM/secure
+content like FairPlay video renders black, same as an iOS screenshot) when:
 
 - `mimic_look` returns few/no elements but you can tell something is on screen (custom-drawn
   UI, games, web views, or an anti-frida app before the bypass is active).
@@ -177,7 +178,7 @@ one, explain the wall rather than experimenting:
 |---|---|
 | `mimic_wake_unlock` | Wake + unlock (no passcode). Run once at session start. |
 | `mimic_look` | Read screen as compact actionable elements. **Call before every tap/type.** `all:true` adds non-actionable text. |
-| `mimic_screenshot` | Full-screen PNG (any app). For visual confirmation or when `look` is empty. |
+| `mimic_screenshot` | Full-screen PNG. For visual confirmation or when `look` is empty. (DRM/secure content blacks out.) |
 | `mimic_record` | Record live screen to mp4 (motion). |
 | `mimic_apps` | Search installed apps → bundle ids. |
 | `mimic_launch` | Launch app by bundle id. |

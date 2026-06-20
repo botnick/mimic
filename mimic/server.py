@@ -64,7 +64,7 @@ TOOLS = [
      "inputSchema": {"type": "object", "properties": {
          "all": {"type": "boolean", "description": "include non-actionable text too (default false)"}}}},
     {"name": "mimic_screenshot",
-     "description": "Capture a PNG screenshot of the whole iOS screen (via go-ios; works for any app). Returns the image.",
+     "description": "Capture a PNG screenshot of the whole iOS screen (via go-ios). Returns the image. Note: DRM/secure-flagged content (FairPlay video, some banking screens) renders black, same as a normal iOS screenshot.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "mimic_launch",
      "description": "Launch an app by bundle id (e.g. com.apple.mobilesafari).",
@@ -99,7 +99,7 @@ TOOLS = [
      "description": "Force-quit (close) an app and remove it from the app switcher. Closes the frontmost app if no bundle is given.",
      "inputSchema": {"type": "object", "properties": {"bundle": {"type": "string", "description": "bundle id to close (default: frontmost)"}}}},
     {"name": "mimic_record",
-     "description": "Record a VIDEO of the live screen (any app) to an mp4 file. Captures real motion. Returns the file path + stats.",
+     "description": "Record a VIDEO of the live screen to an mp4 file (CARenderServer composite). Captures real motion. Returns the file path + stats. Note: respects the secure flag — DRM/screenshot-protected content blacks out, same as a screenshot.",
      "inputSchema": {"type": "object", "properties": {
          "seconds": {"type": "number", "description": "duration (default 5)"},
          "fps": {"type": "integer", "description": "frames/sec (default 10)"},
@@ -176,7 +176,7 @@ TOOLS = [
      "description": "Manage AssistiveTouch (on-screen Home button). state: enable | disable | toggle | get.",
      "inputSchema": {"type": "object", "properties": {"state": {"type": "string", "enum": ["enable", "disable", "toggle", "get"]}}}},
     {"name": "mimic_profile",
-     "description": "Configuration profiles (.mobileconfig). op=list shows installed profiles; op=add installs the profile at `path` (e.g. a CA or HTTP-proxy profile — add p12+password for a signed identity profile); op=remove deletes the profile by `name`.",
+     "description": "Configuration profiles (.mobileconfig). op=list shows installed profiles; op=add STAGES the profile at `path` over lockdown — on this non-supervised device iOS then requires the user to approve it on-device (Settings → Profile Downloaded), and supervised-only payloads like a global HTTP proxy are rejected; op=remove deletes the profile by `name`. list/remove are reliable; add depends on the profile type + manual approval.",
      "inputSchema": {"type": "object", "properties": {
          "op": {"type": "string", "enum": ["list", "add", "remove"]},
          "path": {"type": "string", "description": "for op=add: path to .mobileconfig"},

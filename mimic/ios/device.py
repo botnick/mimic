@@ -457,11 +457,13 @@ class IOSDevice:
 
     def record_video(self, seconds: float = 5.0, fps: int = 10,
                      out: str = "/tmp/mimic_video.mp4", quality: float = 0.5) -> dict:
-        """Record the live screen (any app) to an mp4.
+        """Record the live screen to an mp4.
 
-        Captures the real composited display on-device via CARenderServer (from
+        Captures the composited display on-device via CARenderServer (from
         SpringBoard), pulls the JPEG frames over frida, and assembles them to
         H.264 with tools/mkvideo. No external deps / no developer image needed.
+        Respects the secure flag — DRM/screenshot-protected content blacks out
+        (this is not a DRM bypass), same as a screenshot.
         """
         api = self._springboard()
         devdir = "/var/jb/tmp/mimicrec"
@@ -605,9 +607,10 @@ class IOSDevice:
         return self._tel().hangup()
 
     def frida_frame(self, quality: float = 0.4) -> Optional[bytes]:
-        """One live frame via CARenderServer (SpringBoard, frida) as JPEG bytes. Captures
-        the real composited display BELOW the DRM secure layer, so it mirrors apps that
-        blank go-ios screenshots (Netflix, banking). Slower than go-ios (frida transfer)."""
+        """One live frame via CARenderServer (SpringBoard, frida) as JPEG bytes. Used by the
+        viewer because it sustains a much higher frame rate than go-ios (~25-40 vs ~9 fps).
+        It does NOT bypass DRM — it reads the same secure composite, so FairPlay video and
+        screenshot-protected apps black out exactly like a go-ios screenshot."""
         try:
             b64 = self._springboard().frame(float(quality))
         except Exception:

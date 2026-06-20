@@ -1,5 +1,12 @@
 'use strict';
-/* MimicAgent — injected into SpringBoard. System-wide control via IOHIDEvent (no per-app injection → defeats anti-frida). */
+/* MimicAgent — injected into SpringBoard and into the foreground app.
+ * Control model (what actually works on this device, see docs/TESTING.md):
+ *   - taps go through ACCESSIBILITY (accessibilityActivate / sendActionsForControlEvents)
+ *     in the foreground app — discrete IOHIDEvent taps do NOT fire gesture recognizers here.
+ *   - scroll/drag use IOHIDEvent digitizer events; hardware buttons use Consumer-HID keys.
+ *   - screen frames come from the CARenderServer composite (high fps, not a DRM bypass).
+ * This is per-app injection, so a frida-hardened (anti-attach) app is NOT defeated by this —
+ * it needs the separate frida-gadget bypass (see README). */
 function sym(m, n){ return Module.findExportByName(m, n) || Module.findExportByName(null, n); }
 
 var machTime = new NativeFunction(sym(null,'mach_absolute_time'), 'uint64', []);
@@ -369,9 +376,10 @@ function rsFrameToFile(surf, path, q){
   jpg.writeToFile_atomically_(ObjC.classes.NSString.stringWithString_(path), false);
   _rs.CGImageRelease(cg); _rs.CGContextRelease(ctx);
 }
-// One live frame -> base64 JPEG, captured BELOW the DRM secure layer (so it mirrors
-// Netflix / banking apps that go-ios screenshot shows black). Reuses one surface for
-// speed; runs on the frida thread (off main) like recRun.
+// One live frame -> base64 JPEG from the CARenderServer composite. This is for SPEED
+// (a much higher frame rate than go-ios), NOT a DRM bypass: it reads the same secure
+// composite, so FairPlay video / screenshot-protected apps black out the same as go-ios.
+// Reuses one surface for speed; runs on the frida thread (off main) like recRun.
 var _liveSurf = null;
 function rsFrameB64(q){
   rsInit();
