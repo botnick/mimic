@@ -350,10 +350,11 @@ def ensure_stream_server(port=STREAM_PORT):
 
 
 class FridaSource(threading.Thread):
-    """High-fps, DRM-bypassing capture via CARenderServer over frida (from SpringBoard).
-    Grabs the real composited display BELOW the secure layer, so it mirrors Netflix /
-    banking apps that go-ios screenshots show black — and it runs ~40-60 fps. Exposes the
-    same .latest / .connected interface as MJPEGStream so the engine can swap sources."""
+    """High-fps capture via CARenderServer over frida (from SpringBoard): renders the
+    composited display into an IOSurface and JPEG-encodes it at ~40-60 fps, vs go-ios' ~9.
+    It still respects the secure flag — FairPlay video and screenshot-protected apps black
+    out the same as every capture path — so this is about smoothness, not DRM. Same
+    .latest/.connected interface as MJPEGStream so the engine can swap sources."""
 
     def __init__(self, dev, quality=0.45):
         super().__init__(daemon=True)
@@ -522,7 +523,7 @@ class Engine:
         while True:
             time.sleep(2.0)
             now = time.time()
-            if now - self._last_wake > 18:          # keep display awake -> no black-from-sleep
+            if now - self._last_wake > 10:          # keep display awake -> no black-from-sleep
                 self._last_wake = now
                 try:
                     self.dev.keep_awake()

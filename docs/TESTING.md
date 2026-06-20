@@ -42,10 +42,12 @@ in the abstract. If something is shaky or flat-out doesn't work, it's here too.
 - **Hardware buttons** (`mimic_button`). Volume up/down (the on-screen HUD appears), mute,
   and power/lock (a short press locks the screen — confirmed via `isUILocked` 0→1→0). These
   use Consumer-HID keyboard usages, a different path from the digitizer taps below.
-- **High-fps, DRM-bypassing capture** for the live viewer. A CARenderServer frame
-  (`device.frida_frame`) pulled over frida renders the composited display *below* the secure
-  layer — so DRM apps that go-ios screenshots show black come through — sustained ~25–40 fps
-  (200 frames straight with no leak after the autorelease-pool fix; see Gotchas).
+- **High-fps capture** for the live viewer. A CARenderServer frame (`device.frida_frame`)
+  pulled over frida renders the composited display, sustained ~25–40 fps (200 frames straight
+  with no leak after the autorelease-pool fix; see Gotchas) — much smoother than go-ios' ~9.
+  It does **not** bypass DRM: it reads the same capture composite, so the secure flag still
+  blacks out FairPlay video and screenshot-protected apps (verified on buydrm.com — Safari's
+  UI captures, only the FairPlay video is excluded).
 - **go-ios extras**: device info / battery / process list, GPS spoof, packet capture
   (`.pcap`) and syslog, app install/uninstall, app-container file pull — the reads plus GPS,
   pcap and syslog confirmed on hardware.

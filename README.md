@@ -50,7 +50,7 @@ doc explains why). What's left is a hybrid that is boring and reliable:
 
 Twenty-eight tools, all validated on hardware (details in [docs/TESTING.md](docs/TESTING.md)).
 There is also a **[live viewer](#live-viewer)** — a native desktop window that mirrors the
-phone at up to ~60 fps (DRM apps included) and lets you click / type / swipe it like scrcpy.
+phone at up to ~60 fps and lets you click / type / swipe it like scrcpy.
 
 A few of these are worth calling out because they are not obvious:
 
@@ -255,10 +255,11 @@ Windows/Linux → Tk) and ships a double-clickable `Mimic.app` (`scripts/build_a
 
 Two capture sources, toggled by the **TURBO** button in the rail:
 
-- **TURBO on (default) — CARenderServer over frida.** Grabs the composited display below
-  the DRM secure layer at ~40–60 fps, so it mirrors even **Netflix and banking apps** that
-  ordinary screenshots show as black.
-- **TURBO off — go-ios MJPEG.** ~9 fps and blacked out by DRM, but lighter on frida.
+- **TURBO on (default) — CARenderServer over frida.** Renders the composited display at
+  ~40–60 fps (vs ~9 for go-ios) for a smooth mirror. It still honours the secure flag, so
+  FairPlay video and screenshot-protected apps black out the same as anywhere — this is
+  about frame rate, not capturing DRM.
+- **TURBO off — go-ios MJPEG.** ~9 fps, lighter on frida.
 
 Click a UI element to tap it (home-screen icons launch their app), drag to swipe, type to
 send text, and use the labelled rail for Lock / Vol± / Mute / Home. It keeps the display

@@ -235,10 +235,11 @@ There is also a double-clickable `Mimic.app` (built by `scripts/build_app.sh`).
 
 **Two capture sources, toggled by the rail's TURBO button:**
 - **TURBO on (default) — CARenderServer over frida** (`device.frida_frame` / agent.js
-  `frame`): grabs the composited display BELOW the DRM secure layer at ~40-60 fps, so it
-  mirrors even **Netflix / banking** apps that go-ios screenshots show black. Needs the
-  display awake (the viewer keeps it awake).
-- **TURBO off — go-ios MJPEG**: ~9 fps and blacked out by DRM, but lighter on frida.
+  `frame`): renders the composited display at ~40-60 fps (vs go-ios' ~9) for a smooth
+  mirror. It still respects the secure flag — FairPlay video / screenshot-protected apps
+  black out the same as anywhere, so this is about frame rate, **not** capturing DRM. Needs
+  the display awake (the viewer keeps it awake).
+- **TURBO off — go-ios MJPEG**: ~9 fps, lighter on frida.
 
 Controls (the SAME proven model as the MCP tools):
 - **click** a UI element → nearest accessibility element → `tap_label`. Home-screen icons

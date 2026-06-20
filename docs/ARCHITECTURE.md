@@ -130,16 +130,17 @@ files cannot be injected into a cellular call.
 
 ## Screen capture and the live viewer
 
-There are two ways Mimic gets pixels off the phone, and they trade speed against DRM:
+There are two ways Mimic gets pixels off the phone, and they trade setup against frame rate:
 
 - **go-ios screenshot / MJPEG stream.** Fast, no injection — but it goes through the
   official screenshot service, which honours the per-window *secure* flag. DRM apps
   (Netflix, banking) come back black, and the stream caps around 9 fps.
 - **CARenderServer over frida.** From SpringBoard, `agent.js` renders the composited
   display into an `IOSurface` (`CARenderServerRenderDisplay`), reads it back through a
-  bitmap context, and JPEG-encodes it. This is *below* the secure-display layer, so it
-  captures DRM content, at ~40–60 fps (measured ~17 ms/frame). `mimic_record` uses it for
-  video; `device.frida_frame` exposes a single live frame.
+  bitmap context, and JPEG-encodes it at ~40–60 fps (measured ~17 ms/frame). Like the
+  screenshot service it reads the *capture* composite, so secure surfaces (FairPlay video,
+  screenshot-protected apps) are still excluded — the win is frame rate, not DRM.
+  `mimic_record` uses it for video; `device.frida_frame` exposes a single live frame.
 
 The **live viewer** (`mimic/ios/viewer.py`) is a native desktop window built on this. It
 composites a device frame with Pillow and pulls frames from either source (default
