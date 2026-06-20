@@ -142,7 +142,7 @@ stock macOS `python3`.
 
 ---
 
-## The 30 tools
+## The 39 tools
 
 | Tool | Arguments | What it does |
 |---|---|---|
@@ -166,14 +166,27 @@ stock macOS `python3`.
 | `mimic_mitm` | `op?`, `password?` | Start/stop a built-in mitmweb proxy (web password `Aa1234`) and turn on the SSL bypass; returns the proxy address to set on the phone. |
 | `mimic_button` | `button` | Press a hardware button: `home`/`volup`/`voldown`/`mute`/`power` (power = short press = lock). |
 | `mimic_info` · `mimic_battery` · `mimic_ps` | `kind?` · — · `apps?` | Device info / battery / running processes (go-ios). |
-| `mimic_location` | `lat`,`lon` or `reset` | Spoof the GPS, or reset to the real location. |
+| `mimic_location` | `lat`,`lon` / `gpx` / `reset` | Spoof the GPS to a point, walk/drive a `.gpx` route, or reset to the real location. |
 | `mimic_pcap` · `mimic_syslog` | `seconds?`, … | Capture device packets (.pcap) / syslog for N seconds. |
 | `mimic_install` · `mimic_uninstall` | `path` · `bundle` | Sideload an .ipa/.app / remove an app. |
 | `mimic_files` | `op`,`bundle`,… | App-container files: `tree` / `pull` / `push`. |
 | `mimic_memlimit` · `mimic_assistivetouch` | `process` · `state` | Lift a process's jetsam limit / toggle AssistiveTouch. |
+| `mimic_profile` | `op`,`path?`,`name?` | Configuration profiles: `list` / `add` a .mobileconfig (CA, proxy) / `remove`. |
+| `mimic_kill` | `target` | Kill an app/process by bundle id, name, or PID. |
+| `mimic_devicestate` | `op`,`profile_type?`,`profile_id?` | Simulate conditions (slow network / thermal): `list` / `enable` / `reset`. |
+| `mimic_crash` | `op`,`pattern?`,`dst?` | Crash reports: `ls` / `pull` to a folder / `clear`. |
+| `mimic_diag` | `op`,`keys?` | Device reads: `disk` space / `gestalt` keys / `diag` IORegistry dump. |
+| `mimic_monitor` | `seconds?` | Sample system CPU load (avg + last %) over N seconds. |
+| `mimic_lang` | `lang?`,`locale?` | Read or set the device language / locale. |
+| `mimic_webjs` | `op`,`page?`,`expr?`,`url?` | Run JS in Safari/WebView pages via WebInspector: `list` / `eval` / `open`. |
+| `mimic_forward` | `op`,`host_port?`,`device_port?` | Forward a host TCP port to a device port (like iproxy): `start` / `stop` / `status`. |
 
 `mimic_tap` and `mimic_type` are coordinate-free: they resolve a label from your most
 recent `mimic_look`, so they stay correct even as the layout shifts.
+
+The go-ios-backed tools (`mimic_profile` … `mimic_forward`, plus info/battery/location/etc.)
+talk to the device over USB/lockdown, independent of frida — so they work even on apps that
+reject a frida attach. WebInspector tools need Settings → Safari → Advanced → Web Inspector on.
 
 ### A typical session
 

@@ -660,6 +660,7 @@ class IOSDevice:
         return self._goios(["setlocation", "--lat=%s" % lat, "--lon=%s" % lon], parse_json=False)
 
     def reset_location(self) -> dict:
+        self._kill_pidfile("/tmp/mimic_gpx.pid")  # stop a moving GPX route if one is running
         return self._goios(["resetlocation"], parse_json=False)
 
     def assistive_touch(self, state: str = "get") -> dict:
@@ -735,6 +736,242 @@ class IOSDevice:
 
     def syslog(self, seconds: float = 5.0, out: str = "/tmp/mimic_syslog.txt") -> dict:
         return self._timed_capture(["syslog"], out, seconds, binary=False)
+
+    # --- more go-ios wrappers (all USB / lockdown, no frida) ---
+    def profiles(self, op: str = "list", path: str = "", name: str = "",
+                 p12: str = "", password: str = "") -> dict:
+        """Configuration profiles. op=list; op=add installs a .mobileconfig at `path`
+        (e.g. a CA or HTTP-proxy profile — supply p12+password for a signed/identity
+        profile); op=remove deletes the profile named `name`."""
+        if op == "list":
+            return self._goios(["profile", "list"])
+        if op == "add":
+            if not path:
+                return {"ok": 0, "error": "add needs path=<.mobileconfig>"}
+            a = ["profile", "add", path]
+            if p12:
+                a += ["--p12file=%s" % p12, "--password=%s" % password]
+            return self._goios(a, parse_json=False)
+        if op == "remove":
+            if not name:
+                return {"ok": 0, "error": "remove needs name=<profileName>"}
+            return self._goios(["profile", "remove", name], parse_json=False)
+        return {"ok": 0, "error": "op must be list|add|remove"}
+
+    def kill_app(self, target: str) -> dict:
+        """Kill a running app/process by bundle id, process name, or numeric PID."""
+        t = str(target)
+        if t.isdigit():
+            a = ["kill", "--pid=%s" % t]
+        elif "." in t and " " not in t:
+            a = ["kill", t]            # looks like a bundle id
+        else:
+            a = ["kill", "--process=%s" % t]
+        return self._goios(a, parse_json=False)
+
+    def device_state(self, op: str = "list", profile_type: str = "", profile_id: str = "") -> dict:
+        """Simulate device conditions (slow network, thermal pressure) for testing.
+        op=list shows the available profiles; op=enable turns one on (pass profile_type
+        + profile_id from the list, e.g. SlowNetworkCondition / SlowNetwork3GGood);
+        op=reset clears it. Note: the profile stays active only while go-ios holds the
+        session, so enable runs in the background until reset."""
+        if op == "list":
+            return self._goios(["devicestate", "list"])
+        if op == "reset":
+            pidf = "/tmp/mimic_devstate.pid"
+            return {"ok": 1, "reset": self._kill_pidfile(pidf)}
+        if op == "enable":
+            if not (profile_type and profile_id):
+                return {"ok": 0, "error": "enable needs profile_type + profile_id (see op=list)"}
+            pidf = "/tmp/mimic_devstate.pid"
+            self._kill_pidfile(pidf)
+            p = subprocess.Popen([GOIOS, "devicestate", "enable", profile_type, profile_id],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 start_new_session=True)
+            with open(pidf, "w") as f:
+                f.write(str(p.pid))
+            return {"ok": 1, "active": "%s/%s" % (profile_type, profile_id), "pid": p.pid,
+                    "note": "stays active until mimic_devicestate op=reset"}
+        return {"ok": 0, "error": "op must be list|enable|reset"}
+
+    def crash_reports(self, op: str = "ls", pattern: str = ".", dst: str = "/tmp/mimic_crash") -> dict:
+        """Device crash reports. op=ls lists them (optional glob `pattern`); op=pull copies
+        matching reports to local `dst`; op=clear removes matching reports from the device."""
+        if op == "ls":
+            return self._goios(["crash", "ls"] + ([pattern] if pattern and pattern != "." else []))
+        if op == "pull":
+            os.makedirs(dst, exist_ok=True)
+            r = self._goios(["crash", "cp", pattern, dst], timeout=120, parse_json=False)
+            try:
+                r["files"] = sorted(os.listdir(dst))[:200]
+            except Exception:
+                pass
+            return r
+        if op == "clear":
+            return self._goios(["crash", "rm", pattern], parse_json=False)
+        return {"ok": 0, "error": "op must be ls|pull|clear"}
+
+    def diag(self, op: str = "disk", keys: Optional[list] = None) -> dict:
+        """Low-level device reads. op=disk (free/total storage); op=gestalt with keys=[...]
+        queries MobileGestalt values (e.g. SerialNumber, ProductType, BasebandFirmware);
+        op=diag dumps the IORegistry diagnostics (battery, gas gauge, etc.)."""
+        if op == "disk":
+            return self._goios(["diskspace"])
+        if op == "gestalt":
+            if not keys:
+                return {"ok": 0, "error": "gestalt needs keys=['ProductType', ...]"}
+            return self._goios(["mobilegestalt"] + [str(k) for k in keys])
+        if op == "diag":
+            return self._goios(["diagnostics", "list"])
+        return {"ok": 0, "error": "op must be disk|gestalt|diag"}
+
+    def sysmon(self, seconds: float = 3.0) -> dict:
+        """Sample system CPU load via go-ios sysmontap for `seconds` and return the average
+        + last reading (total load across enabled cores). Quick performance read. (go-ios
+        streams these as log lines on stderr, so we capture to a file then parse — a blocking
+        read would hang past the window.)"""
+        errf = "/tmp/mimic_sysmon.log"
+        with open(errf, "w") as f:
+            p = subprocess.Popen([GOIOS, "sysmontap"], stdout=subprocess.DEVNULL,
+                                 stderr=f, start_new_session=True)
+            time.sleep(max(1.5, float(seconds)))
+            p.terminate()
+            try:
+                p.wait(timeout=5)
+            except Exception:
+                p.kill()
+        loads, cores, last = [], None, None
+        try:
+            for line in open(errf):
+                if '"received CPU usage data"' not in line:
+                    continue
+                try:
+                    j = json.loads(line)
+                except Exception:
+                    continue
+                v = j.get("cpu_total_load")
+                if isinstance(v, (int, float)):
+                    loads.append(float(v)); last = j
+                    cores = j.get("cpu_count")
+        except Exception:
+            pass
+        if not loads:
+            return {"ok": 0, "error": "no CPU samples (sysmontap needs the developer image mounted)",
+                    "seconds": float(seconds)}
+        return {"ok": 1, "cpu_load_pct_last": round(loads[-1], 1),
+                "cpu_load_pct_avg": round(sum(loads) / len(loads), 1),
+                "samples": len(loads), "cpu_count": cores,
+                "enabled_cpus": (last or {}).get("enabled_cpus"), "seconds": float(seconds)}
+
+    def language(self, set_lang: str = "", set_locale: str = "") -> dict:
+        """Read the device language/locale, or change it. Pass set_lang (e.g. th) and/or
+        set_locale (e.g. th_TH) to set; respring/restart may be needed to fully apply."""
+        a = ["lang"]
+        if set_locale:
+            a.append("--setlocale=%s" % set_locale)
+        if set_lang:
+            a.append("--setlang=%s" % set_lang)
+        return self._goios(a, parse_json=not (set_lang or set_locale))
+
+    def route_gpx(self, path: str) -> dict:
+        """Spoof the GPS along a MOVING route from a .gpx file (simulates walking/driving).
+        Runs in the background until mimic_location reset=true. Needs the developer image."""
+        if not os.path.exists(path):
+            return {"ok": 0, "error": "gpx file not found: " + path}
+        pidf = "/tmp/mimic_gpx.pid"
+        self._kill_pidfile(pidf)
+        p = subprocess.Popen([GOIOS, "setlocationgpx", "--gpxfilepath=%s" % path],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True)
+        with open(pidf, "w") as f:
+            f.write(str(p.pid))
+        return {"ok": 1, "gpx": path, "pid": p.pid,
+                "note": "moving along route; mimic_location reset=true to stop"}
+
+    def web_js(self, op: str = "list", page: str = "", expr: str = "",
+               url: str = "", timeout: float = 8.0) -> dict:
+        """Run JavaScript in Safari / WebView pages over the WebInspector (needs Settings →
+        Safari → Advanced → Web Inspector ON). op=list shows inspectable pages with their
+        ids; op=eval runs `expr` in page id `page` and returns the result; op=open navigates
+        Safari to `url`."""
+        to = ["--timeout=%d" % int(timeout)]
+        if op == "list":
+            return self._goios(["webinspector", "list"] + to, timeout=int(timeout) + 5)
+        if op == "eval":
+            if not (page and expr):
+                return {"ok": 0, "error": "eval needs page=<id> + expr=<js> (page ids from op=list)"}
+            return self._goios(["webinspector", "eval", page, expr] + to,
+                               timeout=int(timeout) + 5, parse_json=False)
+        if op == "open":
+            if not url:
+                return {"ok": 0, "error": "open needs url="}
+            return self._goios(["webinspector", "launch", url] + to,
+                               timeout=int(timeout) + 5, parse_json=False)
+        return {"ok": 0, "error": "op must be list|eval|open"}
+
+    def port_forward(self, op: str = "status", host_port: int = 0, device_port: int = 0) -> dict:
+        """Forward a host TCP port to a device port (talk to an on-device service from the
+        Mac — like iproxy). op=start runs it in the background; op=stop tears it down;
+        op=status reports it. One mapping at a time."""
+        import signal
+        pidf = "/tmp/mimic_fwd.pid"
+
+        def running():
+            try:
+                pid = int(open(pidf).read().split()[0])
+                os.kill(pid, 0)
+                return pid
+            except Exception:
+                return None
+
+        if op == "status":
+            pid = running()
+            map_ = ""
+            try:
+                map_ = open(pidf).read().split(" ", 1)[1].strip()
+            except Exception:
+                pass
+            return {"running": bool(pid), "pid": pid, "mapping": map_}
+        if op == "stop":
+            pid = running()
+            if pid:
+                try:
+                    os.killpg(os.getpgid(pid), signal.SIGTERM)
+                except Exception:
+                    try: os.kill(pid, signal.SIGTERM)
+                    except Exception: pass
+            try: os.remove(pidf)
+            except Exception: pass
+            return {"ok": 1, "stopped": bool(pid)}
+        if op == "start":
+            if not (host_port and device_port):
+                return {"ok": 0, "error": "start needs host_port + device_port"}
+            self._kill_pidfile(pidf)
+            p = subprocess.Popen([GOIOS, "forward", str(host_port), str(device_port)],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 start_new_session=True)
+            with open(pidf, "w") as f:
+                f.write("%d %d->%d" % (p.pid, host_port, device_port))
+            return {"ok": 1, "pid": p.pid, "mapping": "127.0.0.1:%d -> device:%d" % (host_port, device_port)}
+        return {"ok": 0, "error": "op must be start|stop|status"}
+
+    def _kill_pidfile(self, pidf: str) -> bool:
+        import signal
+        killed = False
+        try:
+            pid = int(open(pidf).read().split()[0])
+            try:
+                os.killpg(os.getpgid(pid), signal.SIGTERM)
+            except Exception:
+                os.kill(pid, signal.SIGTERM)
+            killed = True
+        except Exception:
+            pass
+        try:
+            os.remove(pidf)
+        except Exception:
+            pass
+        return killed
 
     def close(self):
         try:

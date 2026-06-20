@@ -59,6 +59,15 @@ in the abstract. If something is shaky or flat-out doesn't work, it's here too.
 - **go-ios extras**: device info / battery / process list, GPS spoof, packet capture
   (`.pcap`) and syslog, app install/uninstall, app-container file pull — the reads plus GPS,
   pcap and syslog confirmed on hardware.
+- **More go-ios USB tools** (added later, all confirmed returning real data on the iPhone 8
+  over USB): `mimic_profile` (config-profile list), `mimic_diag` (disk space + MobileGestalt
+  serial/model + IORegistry diagnostics), `mimic_devicestate` (lists SlowNetworkCondition /
+  thermal profiles), `mimic_crash` (lists real crash reports), `mimic_lang` (reads en-TH /
+  locale), `mimic_monitor` (sysmontap CPU load — averaged ~45% over 6 samples; go-ios streams
+  it on stderr, so the wrapper captures to a file rather than blocking on a read), and
+  `mimic_forward` (status). `mimic_kill`, `mimic_webjs` (needs Safari Web Inspector on) and a
+  moving `mimic_location gpx=` route are wired the same way. These ride lockdown/instruments
+  over USB, so they work even on an app that rejects a frida attach.
 - **The live viewer** (`python3 -m mimic.ios.viewer`). Mirrors the device; a click maps to
   the nearest a11y element (home-screen icons launch their app), a drag streams a real finger
   (digitizer down→move→up) so scrolling follows the cursor, and the rail fires hardware buttons.

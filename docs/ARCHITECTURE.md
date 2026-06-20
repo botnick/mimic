@@ -12,7 +12,7 @@ hardware.
 MCP client
    │  stdio, newline-delimited JSON-RPC 2.0
    ▼
-mimic/server.py            tool list + dispatch. No SDK; ~180 lines of plain Python.
+mimic/server.py            tool list + dispatch (39 tools). No SDK; plain Python.
    │
    ▼
 mimic/ios/device.py        IOSDevice — the controller. Owns the connections.
@@ -28,8 +28,12 @@ Two transports, split by what each is good at:
 
 - **go-ios** speaks usbmux and lockdown over the USB cable. It launches apps, grabs a
   real screenshot, lists installed apps, and powers Mimic's device-info, battery, process,
-  GPS-spoof, pcap/syslog, app-install and file-container tools — all without anything
-  injected. No frida required for those.
+  GPS-spoof (point or moving GPX route), pcap/syslog, app-install and file-container tools —
+  plus the later batch: config profiles, process-kill, device-condition simulation (slow
+  network / thermal), crash reports, low-level diag reads (disk / MobileGestalt), CPU-load
+  sampling, language/locale, Safari/WebView JS over WebInspector, and host↔device port
+  forwarding. All over USB, nothing injected — so they keep working on apps that reject a
+  frida attach.
 - **frida-server** is a signed binary running on the phone, reachable over a USB-forwarded
   port. Anything that has to reach inside a live process — walking the view hierarchy,
   firing a control action, setting a text field, recording the screen, speaking into a

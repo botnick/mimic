@@ -202,6 +202,15 @@ one, explain the wall rather than experimenting:
 | `mimic_files` | App-container files — `op`: tree / pull / push (`bundle`, `src`, `dst`, `path`). |
 | `mimic_memlimit` | Lift a `process`'s jetsam memory limit (keep frida targets alive). |
 | `mimic_assistivetouch` | AssistiveTouch `state`: enable / disable / toggle / get. |
+| `mimic_profile` | Config profiles: `op:list` / `add` (`path` .mobileconfig, `p12`+`password` for identity) / `remove` (`name`). |
+| `mimic_kill` | Kill an app/process by `target` = bundle id, process name, or PID. |
+| `mimic_devicestate` | Simulate conditions: `op:list` / `enable` (`profile_type`+`profile_id`) / `reset`. Slow network, thermal pressure. |
+| `mimic_crash` | Crash reports: `op:ls` (`pattern`) / `pull` (`dst` folder) / `clear`. |
+| `mimic_diag` | `op:disk` (storage) / `gestalt` (`keys[]`, e.g. SerialNumber) / `diag` (IORegistry dump). |
+| `mimic_monitor` | Sample system CPU load (avg + last %) over `seconds`. |
+| `mimic_lang` | Read language/locale; set with `lang` and/or `locale`. |
+| `mimic_webjs` | JS in Safari/WebView via WebInspector: `op:list` / `eval` (`page`,`expr`) / `open` (`url`). Needs Web Inspector ON. |
+| `mimic_forward` | Forward a host TCP port to a device port (iproxy-style): `op:start` (`host_port`,`device_port`) / `stop` / `status`. |
 
 ## SSL pinning bypass (SSLKillSwitch3)
 
@@ -271,8 +280,8 @@ device frame is composited with Pillow, so the MCP server itself stays Frida-onl
 These wrap the bundled go-ios binary (lockdown / instruments over USB — no frida needed):
 
 - **`mimic_info` / `mimic_battery` / `mimic_ps`** — device facts, battery, processes.
-- **`mimic_location`** — spoof GPS (`lat`+`lon` to set, `reset:true` to restore; needs the
-  developer image mounted).
+- **`mimic_location`** — spoof GPS (`lat`+`lon` to set, `gpx:<file>` to walk/drive a moving
+  route, `reset:true` to restore; needs the developer image mounted).
 - **`mimic_pcap`** — capture the device's network packets to a `.pcap` for N seconds
   (optionally one `process`) for traffic study — complements `mimic_ssl` + a proxy. (go-ios
   writes `dump-*.pcap`; the tool moves it to your `out` path.)
@@ -283,6 +292,24 @@ These wrap the bundled go-ios binary (lockdown / instruments over USB — no fri
 - **`mimic_memlimit`** — lift a process's jetsam memory limit (keeps frida-heavy targets
   from being killed).
 - **`mimic_assistivetouch`** — toggle the on-screen AssistiveTouch home button.
+- **`mimic_profile`** — install/list/remove configuration profiles (`.mobileconfig`) — e.g.
+  drop in a CA or HTTP-proxy profile, or remove one by name.
+- **`mimic_kill`** — kill an app/process by bundle id, name, or PID (cleaner than `mimic_close`
+  for background daemons).
+- **`mimic_devicestate`** — simulate device conditions for testing: slow-network or thermal
+  profiles. `list` them, `enable` one (stays active in the background), `reset` to clear.
+- **`mimic_crash`** — list / pull / clear on-device crash reports — pull a target app's
+  `.ips` to see *why* it crashed.
+- **`mimic_diag`** — low-level reads: free/total `disk`, `gestalt` keys (serial, model,
+  baseband), or the IORegistry `diag` dump.
+- **`mimic_monitor`** — quick CPU-load sample (avg + last %) over a few seconds.
+- **`mimic_lang`** — read or change the device language/locale.
+- **`mimic_webjs`** — run JavaScript inside Safari / WebView pages over WebInspector
+  (`list` pages → `eval` JS in one → or `open` a URL). Needs Settings → Safari → Advanced →
+  Web Inspector ON; great for reading/poking a web app's DOM from outside.
+- **`mimic_forward`** — forward a host TCP port to a device port (reach an on-device service
+  from the Mac, like `iproxy`).
 
-Not wrapped: go-ios `httpproxy` requires a supervised `--p12file` cert, so for MITM use
-`mimic_ssl` (pinning bypass) plus a manually-set proxy instead.
+Note: go-ios `httpproxy` needs a supervised `--p12file` cert, so for MITM prefer `mimic_mitm`
+(or `mimic_ssl` pinning bypass) + a manually-set proxy. `mimic_profile add` can install a
+proxy/CA `.mobileconfig` if you do want a profile-based proxy.
