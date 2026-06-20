@@ -45,7 +45,8 @@ SCREEN_PTS = (375, 667)
 SCREEN_PX = (750, 1334)
 STREAM_PORT = 3333
 STREAM_URL = "http://127.0.0.1:%d/" % STREAM_PORT
-HEADER_H = 46
+HEADER_H = 54
+FOOTER_H = 28
 
 P = {
     "bg": (10, 11, 15), "panel": (18, 20, 32), "body": (14, 15, 21),
@@ -54,6 +55,8 @@ P = {
     "btn_on": (10, 132, 255), "accent": (10, 132, 255), "green": (48, 209, 88),
     "amber": (255, 159, 10), "red": (255, 69, 58), "text": (242, 243, 247),
     "dim": (135, 141, 158), "icon": (214, 218, 230),
+    "hair": (38, 42, 55), "btn_hi": (45, 50, 65), "text2": (205, 210, 222),
+    "faint": (92, 97, 112),
 }
 
 
@@ -178,33 +181,42 @@ def _ic_drm(d, x, y, c):  # lightning bolt = turbo (high-fps CARenderServer) cap
 
 # ----------------------------------------------------------------- full UI compose
 _CHROME = {}
-RAIL_W = 94
+RAIL_W = 106
 _COLS = {"red": P["red"], "icon": P["icon"], "accent": P["accent"], "green": P["green"],
          "amber": P["amber"]}
 _ICONS = {"power": _ic_power, "volup": _ic_volplus, "voldown": _ic_volminus,
           "mute": _ic_mute, "home": _ic_home, "look": _ic_look, "boxes": _ic_boxes,
           "drm": _ic_drm}
-RAIL_BTNS = [("power", "LOCK", "red"), ("volup", "VOL +", "icon"), ("voldown", "VOL −", "icon"),
-             ("mute", "MUTE", "icon"), ("home", "HOME", "accent"), ("look", "LOOK", "accent"),
-             ("boxes", "A11Y", "green"), ("drm", "TURBO", "amber")]
+_LABELS = {"power": "LOCK", "volup": "VOL +", "voldown": "VOL −", "mute": "MUTE",
+           "home": "HOME", "look": "LOOK", "boxes": "A11Y", "drm": "TURBO"}
+_BTNCOL = {"power": "red", "volup": "icon", "voldown": "icon", "mute": "icon",
+           "home": "accent", "look": "accent", "boxes": "green", "drm": "amber"}
+# grouped so it reads at a glance: device keys · view · capture mode
+RAIL_GROUPS = [["power", "volup", "voldown", "mute"], ["home", "look"], ["boxes", "drm"]]
+
+
+def _rail_btn(d, bx0, by0, bx1, by1, name, lit):
+    col = _COLS[_BTNCOL[name]]
+    cx = (bx0 + bx1) // 2
+    if lit:
+        rr(d, [bx0, by0, bx1, by1], 15, fill=col + (255,))
+        ic, tx = (255, 255, 255), (255, 255, 255)
+    else:
+        rr(d, [bx0, by0, bx1, by1], 15, fill=P["btn"] + (255,))
+        d.line([bx0 + 10, by0 + 1, bx1 - 10, by0 + 1], fill=P["btn_hi"] + (255,))  # top highlight
+        ic, tx = col, P["text2"]
+    _ICONS[name](d, cx, by0 + (by1 - by0) // 2 - 8, ic)
+    lbl = _LABELS[name]
+    tw = d.textlength(lbl, font=F_BTN)
+    d.text((cx - tw / 2, by1 - 16), lbl, font=F_BTN, fill=tx + (255,))
 
 
 def compose(W, H, frame, *, status, conn, boxes_on, nub_hi, typebuf, fps=0, ms=0, flash=None, drm_on=False):
     img = Image.new("RGBA", (W, H), P["bg"] + (255,))
     d = ImageDraw.Draw(img)
-    cy = HEADER_H // 2
-    # header: dot · Mimic · FPS · ms · status
-    d.rectangle([0, 0, W, HEADER_H], fill=P["panel"] + (255,))
-    cc = {"live": P["green"], "connecting": P["amber"], "error": P["red"]}[conn]
-    d.ellipse([16, cy - 5, 26, cy + 5], fill=cc + (255,))
-    d.text((36, cy - 11), "Mimic", font=F_TITLE, fill=P["text"] + (255,))
-    d.text((114, cy - 8), "%d FPS" % fps, font=F_BTN, fill=P["green"] + (255,))
-    d.text((166, cy - 8), "%d ms" % ms, font=F_BTN, fill=P["dim"] + (255,))
-    msg = typebuf and ("type: " + typebuf) or status
-    d.text((226, cy - 7), msg[:24], font=F_MONO, fill=(P["accent"] if typebuf else P["dim"]) + (255,))
 
-    # phone stage (left of the rail)
-    sw, sh = W - RAIL_W, H - HEADER_H
+    # ---- phone stage (left of the rail, between header and footer) ----
+    sw, sh = W - RAIL_W, H - HEADER_H - FOOTER_H
     cached = _CHROME.get((sw, sh))
     if cached is None:
         cached = _CHROME[(sw, sh)] = build_chrome(sw, sh)
@@ -222,29 +234,57 @@ def compose(W, H, frame, *, status, conn, boxes_on, nub_hi, typebuf, fps=0, ms=0
                                                  outline=P["accent"] + (255,), width=2)
     img.alpha_composite(chrome, (0, HEADER_H))
 
-    # right rail: clearly-labelled buttons with press flash
-    d.rectangle([W - RAIL_W, HEADER_H, W, H], fill=P["panel"] + (255,))
-    n = len(RAIL_BTNS)
-    bh = min(66, max(46, (H - HEADER_H - 16) // n - 8))
-    gap = 8
-    total = n * bh + (n - 1) * gap
-    y0 = HEADER_H + max(8, ((H - HEADER_H) - total) // 2)
-    bx0, bx1 = W - RAIL_W + 8, W - 8
-    btns = {}
-    for i, (name, label, ckey) in enumerate(RAIL_BTNS):
-        by0 = y0 + i * (bh + gap)
-        by1 = by0 + bh
-        lit = (name == "boxes" and boxes_on) or (name == "drm" and drm_on) or (flash == name)
-        rr(d, [bx0, by0, bx1, by1], 13, fill=(_COLS[ckey] if lit else P["btn"]) + (255,))
-        _ICONS[name](d, (bx0 + bx1) // 2, by0 + bh // 2 - 7, P["text"] if lit else _COLS[ckey])
-        tw = d.textlength(label, font=F_BTN)
-        d.text(((bx0 + bx1) / 2 - tw / 2, by1 - 15), label, font=F_BTN,
-               fill=(P["text"] if lit else P["dim"]) + (255,))
-        btns[name] = (bx0, by0, bx1, by1)
+    # ---- header: M badge · Mimic · (TURBO tag) · FPS pill ----
+    d.rectangle([0, 0, W, HEADER_H], fill=P["panel"] + (255,))
+    d.line([0, HEADER_H - 1, W, HEADER_H - 1], fill=P["hair"] + (255,))
+    rr(d, [16, 14, 42, 40], 8, fill=P["accent"] + (255,))
+    d.text((23, 15), "M", font=F_TITLE, fill=(255, 255, 255, 255))
+    d.text((52, 16), "Mimic", font=F_TITLE, fill=P["text"] + (255,))
+    cc = {"live": P["green"], "connecting": P["amber"], "error": P["red"]}[conn]
+    pill = "%d FPS" % fps
+    pw = d.textlength(pill, font=F_BTN)
+    px1, px0 = W - 14, W - 14 - (pw + 32)
+    rr(d, [px0, 16, px1, 38], 11, fill=P["btn"] + (255,))
+    d.ellipse([px0 + 11, 23, px0 + 19, 31], fill=cc + (255,))
+    d.text((px0 + 25, 19), pill, font=F_BTN, fill=P["text2"] + (255,))
+    if drm_on:
+        tw = d.textlength("TURBO", font=F_BTN)
+        tx0 = px0 - (tw + 28)
+        rr(d, [tx0, 16, px0 - 10, 38], 11, fill=P["amber"] + (255,))
+        d.text((tx0 + 11, 19), "TURBO", font=F_BTN, fill=(26, 22, 8, 255))
 
-    off = HEADER_H
-    hit = {"screen": (sx, sy + off, SW, SH),
-           "nubs": {k: (v[0], v[1] + off, v[2], v[3] + off) for k, v in geom["nubs"].items()},
+    # ---- right rail: grouped, labelled buttons with press flash ----
+    d.rectangle([W - RAIL_W, HEADER_H, W, H - FOOTER_H], fill=P["panel"] + (255,))
+    d.line([W - RAIL_W, HEADER_H, W - RAIL_W, H - FOOTER_H], fill=P["hair"] + (255,))
+    bx0, bx1 = W - RAIL_W + 10, W - 10
+    avail = (H - FOOTER_H) - HEADER_H
+    bh, bgap, ggap = 52, 7, 18
+    ncount = sum(len(g) for g in RAIL_GROUPS)
+    total = ncount * bh + (ncount - len(RAIL_GROUPS)) * bgap + (len(RAIL_GROUPS) - 1) * ggap
+    y = HEADER_H + max(12, (avail - total) // 2)
+    btns = {}
+    for gi, group in enumerate(RAIL_GROUPS):
+        for j, name in enumerate(group):
+            lit = (name == "boxes" and boxes_on) or (name == "drm" and drm_on) or (flash == name)
+            _rail_btn(d, bx0, y, bx1, y + bh, name, lit)
+            btns[name] = (bx0, y, bx1, y + bh)
+            y += bh + (bgap if j < len(group) - 1 else 0)
+        if gi < len(RAIL_GROUPS) - 1:
+            d.line([bx0 + 16, y + ggap // 2, bx1 - 16, y + ggap // 2], fill=P["hair"] + (255,))
+            y += ggap
+
+    # ---- footer: status + a one-line how-to ----
+    fy = H - FOOTER_H
+    d.rectangle([0, fy, W, H], fill=P["panel"] + (255,))
+    d.line([0, fy, W, fy], fill=P["hair"] + (255,))
+    msg = typebuf and ("type:  " + typebuf) or status
+    d.text((16, fy + 8), msg[:40], font=F_MONO, fill=(P["accent"] if typebuf else P["dim"]) + (255,))
+    hint = "click = tap · drag = scroll · type = send"
+    hw = d.textlength(hint, font=F_MONO)
+    d.text((W - RAIL_W - 14 - hw, fy + 8), hint, font=F_MONO, fill=P["faint"] + (255,))
+
+    hit = {"screen": (sx, sy + HEADER_H, SW, SH),
+           "nubs": {k: (v[0], v[1] + HEADER_H, v[2], v[3] + HEADER_H) for k, v in geom["nubs"].items()},
            "buttons": btns}
     return img, hit
 
