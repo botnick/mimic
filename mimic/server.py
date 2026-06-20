@@ -119,6 +119,9 @@ TOOLS = [
      "inputSchema": {"type": "object", "properties": {
          "bypass": {"type": "boolean", "description": "true = disable cert validation (kill switch ON), false = restore. Omit to just read state."},
          "relaunch": {"type": "string", "description": "bundle id to kill + relaunch so the change applies now"}}}},
+    {"name": "mimic_unpin",
+     "description": "Install frida SSL-unpinning hooks in the FOREGROUND app (BoringSSL custom-verify + SecTrust trust evaluation), so a proxy can decrypt its HTTPS even where SSLKillSwitch3 doesn't reach. Launch the target app first; per-app, complements mimic_ssl. A frida-hardened app needs the gadget bypass.",
+     "inputSchema": {"type": "object", "properties": {}}},
     # --- go-ios powered extras (USB, independent of frida) ---
     {"name": "mimic_info",
      "description": "Device info via go-ios (model, iOS version, names, identifiers). Optional kind: 'display' or 'lockdown'.",
@@ -212,6 +215,8 @@ def call_tool(name, args):
         else:
             r = d.ssl_status()
         return [text(json.dumps(r, ensure_ascii=False))]
+    if name == "mimic_unpin":
+        return [text(json.dumps(d.ssl_unpin(), ensure_ascii=False))]
     if name == "mimic_info":
         return [text(json.dumps(d.device_info(args.get("kind", "")), ensure_ascii=False))]
     if name == "mimic_battery":

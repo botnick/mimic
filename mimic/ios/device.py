@@ -286,6 +286,18 @@ class IOSDevice:
                 out["relaunch_error"] = str(e)
         return out
 
+    def ssl_unpin(self) -> dict:
+        """Install frida SSL-unpinning hooks in the FOREGROUND app (BoringSSL custom-verify +
+        SecTrust) so a proxy can MITM its HTTPS even where SSLKillSwitch3 doesn't reach.
+        Per-app: launch the target app first; a frida-hardened app needs the gadget bypass."""
+        ident, api = self._foreground()
+        if api is None:
+            return {"ok": 0, "error": "no frida access to foreground app", "app": ident}
+        r = api.ssl_unpin()
+        if isinstance(r, dict):
+            r["app"] = ident
+        return r
+
     def swipe(self, x1: int, y1: int, x2: int, y2: int, ms: int = 300):
         return self._springboard().swipe(x1, y1, x2, y2, ms)
 

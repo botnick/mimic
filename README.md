@@ -42,13 +42,14 @@ doc explains why). What's left is a hybrid that is boring and reliable:
 | Speak on the device's own speaker | `mimic_speak` | works |
 | Hang up | `mimic_hangup` | works |
 | Toggle the system SSL pinning bypass | `mimic_ssl` | works |
+| Per-app SSL unpinning (frida: BoringSSL + SecTrust) | `mimic_unpin` | works |
 | Press hardware buttons (Vol±, Mute, Power/Lock, Home) | `mimic_button` | works |
 | Device info / battery / running processes | `mimic_info`, `mimic_battery`, `mimic_ps` | works |
 | Spoof GPS · capture pcap / syslog | `mimic_location`, `mimic_pcap`, `mimic_syslog` | works |
 | Install / uninstall / pull app-container files | `mimic_install`, `mimic_uninstall`, `mimic_files` | works |
 | Lift jetsam memory limit · toggle AssistiveTouch | `mimic_memlimit`, `mimic_assistivetouch` | works |
 
-Twenty-eight tools, all validated on hardware (details in [docs/TESTING.md](docs/TESTING.md)).
+Twenty-nine tools, all validated on hardware (details in [docs/TESTING.md](docs/TESTING.md)).
 There is also a **[live viewer](#live-viewer)** — a native desktop window that mirrors the
 phone at up to ~60 fps and lets you click / type / swipe it like scrcpy.
 
@@ -140,7 +141,7 @@ stock macOS `python3`.
 
 ---
 
-## The 28 tools
+## The 29 tools
 
 | Tool | Arguments | What it does |
 |---|---|---|
@@ -160,6 +161,7 @@ stock macOS `python3`.
 | `mimic_speak` | `text`, `lang?` | Speak on the device's own speaker. |
 | `mimic_hangup` | — | End the current call. |
 | `mimic_ssl` | `bypass?`, `relaunch?` | Read or toggle the SSL Kill Switch 3 pinning bypass. |
+| `mimic_unpin` | — | Hook the foreground app's TLS trust checks (BoringSSL custom-verify + SecTrust) so a proxy can read its HTTPS — per-app, complements `mimic_ssl`. |
 | `mimic_button` | `button` | Press a hardware button: `home`/`volup`/`voldown`/`mute`/`power` (power = short press = lock). |
 | `mimic_info` · `mimic_battery` · `mimic_ps` | `kind?` · — · `apps?` | Device info / battery / running processes (go-ios). |
 | `mimic_location` | `lat`,`lon` or `reset` | Spoof the GPS, or reset to the real location. |
@@ -235,6 +237,13 @@ certificate does not even need to be trusted on the device — validation is sim
 
 This requires SSL Kill Switch 3 to be installed on the device; Mimic only flips its
 switch.
+
+`mimic_unpin` is the **per-app** complement. With the target app in the foreground it injects
+frida hooks into the app's own TLS trust checks — `SSL_set_custom_verify` /
+`SSL_CTX_set_custom_verify` (the BoringSSL path `NSURLSession`/`CFNetwork` use) plus
+`SecTrustEvaluate*` — so even pinning the system tweak doesn't catch is defeated. Launch the
+app, call `mimic_unpin` (best before its first request), then point your proxy at the device.
+A frida-hardened app needs the gadget bypass first.
 
 ---
 

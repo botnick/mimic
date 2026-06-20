@@ -39,6 +39,10 @@ in the abstract. If something is shaky or flat-out doesn't work, it's here too.
   through a proxy and its API calls were readable.
 - **Operating a hardened, anti-frida app.** With the gadget bypass installed, a commercial
   app that rejects a frida attach was opened, navigated, and typed into.
+- **Per-app SSL unpinning** (`mimic_unpin`). Hooks the foreground app's BoringSSL
+  custom-verify (`SSL_set_custom_verify` / `SSL_CTX_set_custom_verify`) and `SecTrust*` —
+  confirmed installing all four hooks in Safari with no errors. Complements the system tweak
+  for apps that pin in ways it misses.
 - **Hardware buttons** (`mimic_button`). Volume up/down (the on-screen HUD appears), mute,
   and power/lock (a short press locks the screen — confirmed via `isUILocked` 0→1→0). These
   use Consumer-HID keyboard usages, a different path from the digitizer taps below.

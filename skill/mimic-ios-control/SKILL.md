@@ -192,6 +192,7 @@ one, explain the wall rather than experimenting:
 | `mimic_speak` | Speak on the device's own speaker (no call). |
 | `mimic_hangup` | End the current call. |
 | `mimic_ssl` | Read/toggle the SSL Kill Switch 3 cert-pinning bypass. No args = status; `bypass:true/false` to set; `relaunch:<bundle>` to apply now. |
+| `mimic_unpin` | Hook the FOREGROUND app's TLS trust checks (BoringSSL custom-verify + SecTrust) so a proxy can MITM its HTTPS — per-app, complements `mimic_ssl`. Launch the target app first. |
 | `mimic_info` / `mimic_battery` / `mimic_ps` | Device info / battery / running processes (go-ios). |
 | `mimic_location` | Spoof GPS: `lat`+`lon` to set, `reset:true` to restore. |
 | `mimic_pcap` | Capture network packets to a `.pcap` for N `seconds` (optional `process`). |
@@ -217,6 +218,13 @@ inspection. It works by reading/writing the tweak's own prefs file
   (it kills + relaunches that one app), or just close and reopen the app yourself.
 - `found:false` means the prefs file wasn't there yet — the tool still writes it, but
   double-check SSLKillSwitch3 is actually installed if a target app still pins.
+
+`mimic_unpin` is the **per-app** route, and a useful complement. With the target app in the
+foreground it frida-hooks the app's own trust checks — `SSL_set_custom_verify` /
+`SSL_CTX_set_custom_verify` (the BoringSSL path `NSURLSession`/`CFNetwork` use) plus
+`SecTrustEvaluate*` — so it catches pinning the system-wide tweak misses. It only reaches an
+app frida can attach to (a frida-hardened app needs the gadget bypass), and is best called
+right after launching the app, before its first request.
 
 ## Live screen viewer (desktop window)
 

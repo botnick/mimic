@@ -488,6 +488,36 @@ function speakUplink(text, lang, rate, pitch){
   }catch(e){ return { err: '' + e }; }
 }
 
+// ---- per-app SSL unpinning (run inside the target app) ----
+// Hooks the trust checks the iOS TLS stack actually uses, so a proxy can MITM HTTPS even
+// where SSLKillSwitch3 doesn't reach (BoringSSL custom-verify covers NSURLSession/CFNetwork;
+// SecTrust covers the higher-level evaluations). Installed once; callbacks kept alive.
+var _sslUnpinned = false, _okVerifyCb = null;
+function sslUnpin(){
+  if (_sslUnpinned) return { ok: 1, already: 1 };
+  var hooked = [], errs = [];
+  try {
+    _okVerifyCb = new NativeCallback(function(){ return 0; /* ssl_verify_ok */ }, 'int', ['pointer','pointer']);
+    ['SSL_set_custom_verify','SSL_CTX_set_custom_verify'].forEach(function(fn){
+      var p = Module.findExportByName(null, fn);
+      if (p) { Interceptor.attach(p, { onEnter: function(a){ a[2] = _okVerifyCb; } }); hooked.push(fn); }
+    });
+  } catch(e){ errs.push('boringssl: ' + e); }
+  try {
+    var stwe = Module.findExportByName(null, 'SecTrustEvaluateWithError');
+    if (stwe) { Interceptor.attach(stwe, { onLeave: function(r){ r.replace(0x1); } }); hooked.push('SecTrustEvaluateWithError'); }
+  } catch(e){ errs.push('stwe: ' + e); }
+  try {
+    var ste = Module.findExportByName(null, 'SecTrustEvaluate');
+    if (ste) { Interceptor.attach(ste, {
+      onEnter: function(a){ this.res = a[1]; },
+      onLeave: function(r){ if (this.res && !this.res.isNull()) { try { this.res.writeU32(1); /* kSecTrustResultProceed */ } catch(e){} } r.replace(0); }
+    }); hooked.push('SecTrustEvaluate'); }
+  } catch(e){ errs.push('ste: ' + e); }
+  _sslUnpinned = hooked.length > 0;
+  return { ok: _sslUnpinned ? 1 : 0, hooked: hooked, errs: errs };
+}
+
 rpc.exports = {
   ui: function(){ var r=null; ObjC.schedule(ObjC.mainQueue,function(){ try{r=dumpUI();}catch(e){r={err:''+e};} }); var n=0; while(r===null&&n<400){Thread.sleep(0.01);n++;} return r; },
   activate: function(label, idx){ var r=null; ObjC.schedule(ObjC.mainQueue,function(){ try{r=axActivate(label, idx);}catch(e){r={err:''+e};} }); var n=0; while(r===null&&n<300){Thread.sleep(0.01);n++;} return r; },
@@ -535,4 +565,5 @@ rpc.exports = {
   uplinkSpeaking: function(){ try { return !!(_synth && _synth.isSpeaking()); } catch(e){ return false; } },
   sslGet: function(paths){ return sslRead(paths); },
   sslSet: function(paths, on){ return sslWrite(paths, on?1:0); },
+  sslUnpin: function(){ return sslUnpin(); },
 };
