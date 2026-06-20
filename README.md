@@ -43,13 +43,14 @@ doc explains why). What's left is a hybrid that is boring and reliable:
 | Hang up | `mimic_hangup` | works |
 | Toggle the system SSL pinning bypass | `mimic_ssl` | works |
 | Per-app SSL unpinning (frida: BoringSSL + SecTrust) | `mimic_unpin` | works |
+| Built-in MITM proxy (mitmweb, easy web password) | `mimic_mitm` | works |
 | Press hardware buttons (Vol±, Mute, Power/Lock, Home) | `mimic_button` | works |
 | Device info / battery / running processes | `mimic_info`, `mimic_battery`, `mimic_ps` | works |
 | Spoof GPS · capture pcap / syslog | `mimic_location`, `mimic_pcap`, `mimic_syslog` | works |
 | Install / uninstall / pull app-container files | `mimic_install`, `mimic_uninstall`, `mimic_files` | works |
 | Lift jetsam memory limit · toggle AssistiveTouch | `mimic_memlimit`, `mimic_assistivetouch` | works |
 
-Twenty-nine tools, all validated on hardware (details in [docs/TESTING.md](docs/TESTING.md)).
+Thirty tools, all validated on hardware (details in [docs/TESTING.md](docs/TESTING.md)).
 There is also a **[live viewer](#live-viewer)** — a native desktop window that mirrors the
 phone at up to ~60 fps and lets you click / type / swipe it like scrcpy.
 
@@ -141,7 +142,7 @@ stock macOS `python3`.
 
 ---
 
-## The 29 tools
+## The 30 tools
 
 | Tool | Arguments | What it does |
 |---|---|---|
@@ -162,6 +163,7 @@ stock macOS `python3`.
 | `mimic_hangup` | — | End the current call. |
 | `mimic_ssl` | `bypass?`, `relaunch?` | Read or toggle the SSL Kill Switch 3 pinning bypass. |
 | `mimic_unpin` | — | Hook the foreground app's TLS trust checks (BoringSSL custom-verify + SecTrust) so a proxy can read its HTTPS — per-app, complements `mimic_ssl`. |
+| `mimic_mitm` | `op?`, `password?` | Start/stop a built-in mitmweb proxy (web password `Aa1234`) and turn on the SSL bypass; returns the proxy address to set on the phone. |
 | `mimic_button` | `button` | Press a hardware button: `home`/`volup`/`voldown`/`mute`/`power` (power = short press = lock). |
 | `mimic_info` · `mimic_battery` · `mimic_ps` | `kind?` · — · `apps?` | Device info / battery / running processes (go-ios). |
 | `mimic_location` | `lat`,`lon` or `reset` | Spoof the GPS, or reset to the real location. |
@@ -244,6 +246,12 @@ frida hooks into the app's own TLS trust checks — `SSL_set_custom_verify` /
 `SecTrustEvaluate*` — so even pinning the system tweak doesn't catch is defeated. Launch the
 app, call `mimic_unpin` (best before its first request), then point your proxy at the device.
 A frida-hardened app needs the gadget bypass first.
+
+For the proxy itself, `mimic_mitm` is built in. `mimic_mitm(op="start")` launches **mitmweb**
+with an easy web password (`Aa1234`), turns the SSL bypass on, and returns the proxy address
+to set on the phone's Wi-Fi (e.g. `192.168.1.67:8080`) plus the web-UI URL; `op="stop"` /
+`"status"` manage it. With the bypass on you don't need to trust the mitmproxy CA. There's
+also `scripts/mitm.sh` to run the same thing straight from a terminal.
 
 ---
 

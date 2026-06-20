@@ -193,6 +193,7 @@ one, explain the wall rather than experimenting:
 | `mimic_hangup` | End the current call. |
 | `mimic_ssl` | Read/toggle the SSL Kill Switch 3 cert-pinning bypass. No args = status; `bypass:true/false` to set; `relaunch:<bundle>` to apply now. |
 | `mimic_unpin` | Hook the FOREGROUND app's TLS trust checks (BoringSSL custom-verify + SecTrust) so a proxy can MITM its HTTPS — per-app, complements `mimic_ssl`. Launch the target app first. |
+| `mimic_mitm` | Built-in mitmweb proxy: `op:start` launches it (web password `Aa1234`) + turns the SSL bypass on, returns the proxy address; `stop`/`status` manage it. |
 | `mimic_info` / `mimic_battery` / `mimic_ps` | Device info / battery / running processes (go-ios). |
 | `mimic_location` | Spoof GPS: `lat`+`lon` to set, `reset:true` to restore. |
 | `mimic_pcap` | Capture network packets to a `.pcap` for N `seconds` (optional `process`). |
@@ -225,6 +226,11 @@ foreground it frida-hooks the app's own trust checks — `SSL_set_custom_verify`
 `SecTrustEvaluate*` — so it catches pinning the system-wide tweak misses. It only reaches an
 app frida can attach to (a frida-hardened app needs the gadget bypass), and is best called
 right after launching the app, before its first request.
+
+For the proxy itself, **`mimic_mitm`** is built in — `op:start` launches mitmweb (web
+password `Aa1234`), turns the SSL bypass on, and returns the proxy address to set on the
+phone's Wi-Fi plus the web-UI URL; `stop`/`status` manage it. With the bypass on, the
+mitmproxy CA needn't be trusted. (`scripts/mitm.sh` runs the same from a terminal.)
 
 ## Live screen viewer (desktop window)
 

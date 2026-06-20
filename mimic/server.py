@@ -122,6 +122,11 @@ TOOLS = [
     {"name": "mimic_unpin",
      "description": "Install frida SSL-unpinning hooks in the FOREGROUND app (BoringSSL custom-verify + SecTrust trust evaluation), so a proxy can decrypt its HTTPS even where SSLKillSwitch3 doesn't reach. Launch the target app first; per-app, complements mimic_ssl. A frida-hardened app needs the gadget bypass.",
      "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "mimic_mitm",
+     "description": "Built-in MITM proxy (mitmweb). op=start launches it with an easy web password (default Aa1234) AND turns on the SSL pinning bypass; op=stop kills it; op=status reports it. Returns the proxy address to set on the phone's Wi-Fi, plus the web-UI URL + password. With the bypass on you do not need to trust the mitmproxy CA.",
+     "inputSchema": {"type": "object", "properties": {
+         "op": {"type": "string", "enum": ["start", "stop", "status"]},
+         "password": {"type": "string", "description": "web UI password (default Aa1234)"}}}},
     # --- go-ios powered extras (USB, independent of frida) ---
     {"name": "mimic_info",
      "description": "Device info via go-ios (model, iOS version, names, identifiers). Optional kind: 'display' or 'lockdown'.",
@@ -217,6 +222,8 @@ def call_tool(name, args):
         return [text(json.dumps(r, ensure_ascii=False))]
     if name == "mimic_unpin":
         return [text(json.dumps(d.ssl_unpin(), ensure_ascii=False))]
+    if name == "mimic_mitm":
+        return [text(json.dumps(d.mitm(args.get("op", "status"), password=args.get("password", "Aa1234")), ensure_ascii=False))]
     if name == "mimic_info":
         return [text(json.dumps(d.device_info(args.get("kind", "")), ensure_ascii=False))]
     if name == "mimic_battery":

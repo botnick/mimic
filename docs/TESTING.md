@@ -43,6 +43,10 @@ in the abstract. If something is shaky or flat-out doesn't work, it's here too.
   custom-verify (`SSL_set_custom_verify` / `SSL_CTX_set_custom_verify`) and `SecTrust*` —
   confirmed installing all four hooks in Safari with no errors. Complements the system tweak
   for apps that pin in ways it misses.
+- **Built-in MITM** (`mimic_mitm`). `start` launches `mitmweb` on the host with an easy web
+  password (`Aa1234`), binds the proxy + web-UI ports, and flips the SSL bypass on —
+  confirmed the proxy and password-protected web UI come up and `status` tracks the process.
+  (A stale process on the port is cleared first so the relaunch binds cleanly.)
 - **Hardware buttons** (`mimic_button`). Volume up/down (the on-screen HUD appears), mute,
   and power/lock (a short press locks the screen — confirmed via `isUILocked` 0→1→0). These
   use Consumer-HID keyboard usages, a different path from the digitizer taps below.

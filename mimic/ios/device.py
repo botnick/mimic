@@ -298,6 +298,77 @@ class IOSDevice:
             r["app"] = ident
         return r
 
+    def mitm(self, op: str = "status", port: int = 8080, web_port: int = 8081,
+             password: str = "Aa1234") -> dict:
+        """Built-in MITM: a mitmweb proxy on the host with an easy web password. op=start
+        launches it AND turns on the SSL bypass; stop/status manage it. Point the phone's
+        Wi-Fi HTTP proxy at the returned address — with the bypass on you need not trust the
+        mitmproxy CA."""
+        import shutil
+        import signal
+        pidf, flows = "/tmp/mimic_mitm.pid", "/tmp/mimic_mitm.flows"
+        ip = (_sh(["ipconfig", "getifaddr", "en0"]).stdout.strip()
+              or _sh(["ipconfig", "getifaddr", "en1"]).stdout.strip() or "127.0.0.1")
+        info = {"proxy": "%s:%d" % (ip, port), "web": "http://127.0.0.1:%d" % web_port,
+                "password": password, "flows": flows}
+
+        def running():
+            try:
+                pid = int(open(pidf).read())
+                os.kill(pid, 0)
+                return pid
+            except Exception:
+                return None
+
+        if op == "status":
+            pid = running()
+            return dict(info, running=bool(pid), pid=pid)
+        if op == "stop":
+            pid = running()
+            if pid:
+                try:
+                    os.killpg(os.getpgid(pid), signal.SIGTERM)
+                except Exception:
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                    except Exception:
+                        pass
+            try:
+                os.remove(pidf)
+            except Exception:
+                pass
+            return {"ok": 1, "stopped": bool(pid)}
+        if running():
+            return dict(info, ok=1, already=True)
+        # clear anything stale bound to the proxy port so the new mitmweb can bind
+        try:
+            for spid in _sh(["lsof", "-nP", "-iTCP:%d" % port, "-sTCP:LISTEN", "-t"]).stdout.split():
+                try:
+                    os.kill(int(spid), signal.SIGTERM)
+                except Exception:
+                    pass
+            time.sleep(0.7)
+        except Exception:
+            pass
+        mitmweb = shutil.which("mitmweb") or os.path.expanduser("~/homebrew/bin/mitmweb")
+        if not os.path.exists(mitmweb):
+            return {"ok": 0, "error": "mitmweb not found — `pip install mitmproxy`"}
+        p = subprocess.Popen(
+            [mitmweb, "--listen-host", "0.0.0.0", "-p", str(port),
+             "--web-host", "127.0.0.1", "--web-port", str(web_port), "--no-web-open-browser",
+             "--set", "web_password=%s" % password, "-w", flows],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        with open(pidf, "w") as f:
+            f.write(str(p.pid))
+        try:
+            self.ssl_set(True)
+        except Exception:
+            pass
+        return dict(info, ok=1, pid=p.pid, ssl_bypass="on",
+                    ca=os.path.expanduser("~/.mitmproxy/mitmproxy-ca-cert.pem"),
+                    note="Set the phone's Wi-Fi HTTP proxy to %s:%d, open the target app "
+                         "(run mimic_unpin if it still pins), and watch flows at the web URL." % (ip, port))
+
     def swipe(self, x1: int, y1: int, x2: int, y2: int, ms: int = 300):
         return self._springboard().swipe(x1, y1, x2, y2, ms)
 
