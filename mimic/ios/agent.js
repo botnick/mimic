@@ -314,8 +314,21 @@ function axSetText(label, text){
       for (var i = 0; i < subs.count(); i++) { walk(subs.objectAtIndex_(i), depth + 1); if (found) return; }
     } catch (e) {}
   }
+  // With no label, prefer the FOCUSED field (firstResponder) — on a multi-field form
+  // (e.g. proxy Server + Port) the plain first-field walk grabs the wrong one.
+  if (!label){
+    try {
+      var fr = null;
+      (function frWalk(v, depth){
+        if (fr || depth > 45) return;
+        try { if (isField(v) && v.respondsToSelector_(ObjC.selector('isFirstResponder')) && v.isFirstResponder()) { fr = v; return; }
+              var s = v.subviews(); for (var i = 0; i < s.count(); i++){ frWalk(s.objectAtIndex_(i), depth+1); if (fr) return; } } catch (e) {}
+      })(ObjC.classes.UIApplication.sharedApplication().keyWindow(), 0);
+      if (fr) found = fr;
+    } catch (e) {}
+  }
   var wins = ObjC.classes.UIApplication.sharedApplication().windows();
-  for (var k = 0; k < wins.count(); k++) { walk(wins.objectAtIndex_(k), 0); if (found) break; }
+  for (var k = 0; !found && k < wins.count(); k++) { walk(wins.objectAtIndex_(k), 0); if (found) break; }
   if (!found) return { err: 'no text field for: ' + label };
   try {
     var ns = ObjC.classes.NSString.stringWithString_(text);
