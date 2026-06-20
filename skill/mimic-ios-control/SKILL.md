@@ -244,8 +244,9 @@ There is also a double-clickable `Mimic.app` (built by `scripts/build_app.sh`).
 Controls (the SAME proven model as the MCP tools):
 - **click** a UI element → nearest accessibility element → `tap_label`. Home-screen icons
   launch their app (tap_label falls back to SpringBoard there); in-app controls activate.
-- **drag** → `swipe`; **labelled rail** → Lock / Vol± / Mute / Home / Look / A11y, each
-  with a press flash; **type** while focused, Enter sends.
+- **drag** → a live finger (digitizer `down→move→up`), so scrolling follows the cursor like
+  holding the phone; **labelled rail** → Lock / Vol± / Mute / Home / Look / A11y, each with a
+  press flash; **type** while focused, Enter sends.
 
 Same wall as `mimic_tap`: custom-drawn views with no a11y element still can't be tapped.
 The viewer **self-heals** (restarts a stalled source, keeps the display awake) and the

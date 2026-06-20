@@ -147,8 +147,8 @@ composites a device frame with Pillow and pulls frames from either source (defau
 CARenderServer; a TURBO toggle switches to go-ios). It is backend-pluggable — Cocoa/AppKit
 on macOS (the system Tk 8.5 freezes), Tkinter on Windows/Linux — and self-heals a stalled
 capture while keeping the display awake. Clicks map to the nearest accessibility element
-(tapping through the same path as `mimic_tap`), drags become swipes, and the rail fires
-`mimic_button` presses.
+(tapping through the same path as `mimic_tap`), a drag becomes a live finger (digitizer
+`down→move→up`) so scrolling follows the cursor, and the rail fires `mimic_button` presses.
 
 ## Configuration
 

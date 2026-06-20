@@ -261,9 +261,10 @@ Two capture sources, toggled by the **TURBO** button in the rail:
   about frame rate, not capturing DRM.
 - **TURBO off — go-ios MJPEG.** ~9 fps, lighter on frida.
 
-Click a UI element to tap it (home-screen icons launch their app), drag to swipe, type to
-send text, and use the labelled rail for Lock / Vol± / Mute / Home. It keeps the display
-awake and self-heals a stalled capture; the header shows live FPS and frame latency.
+Click a UI element to tap it (home-screen icons launch their app), drag to scroll like a
+real finger (a live `down → move → up` that follows the cursor), type to send text, and use
+the labelled rail for Lock / Vol± / Mute / Home. It keeps the display awake and self-heals a
+stalled capture; the header shows live FPS and frame latency.
 
 ---
 
