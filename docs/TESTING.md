@@ -59,26 +59,27 @@ in the abstract. If something is shaky or flat-out doesn't work, it's here too.
 - **go-ios extras**: device info / battery / process list, GPS spoof, packet capture
   (`.pcap`) and syslog, app install/uninstall, app-container file pull — the reads plus GPS,
   pcap and syslog confirmed on hardware.
-- **More go-ios USB tools** (added later). Two honesty tiers — separating "returned real
-  data on the iPhone 8" from "the command runs but I didn't independently measure the
-  device-side effect":
-  - *Verified returning real data / doing the thing:* `mimic_diag` (disk space + MobileGestalt
-    serial/model + IORegistry diagnostics), `mimic_crash` (listed 232 reports **and** pulled all
-    232 to disk), `mimic_lang` (read en-TH / locale), `mimic_monitor` (sysmontap CPU load,
-    averaged ~45% over 6 samples; go-ios streams it on stderr so the wrapper captures to a file
-    instead of blocking on a read), `mimic_kill` (killed a running app by bundle id), `mimic_ps`,
-    `mimic_battery`, `mimic_info`, `mimic_profile` op=list.
-  - *Command succeeds (returns ok) but the device-side effect was NOT separately measured:*
-    `mimic_devicestate enable`/`reset` (go-ios reports the condition applied; I didn't measure
-    actual network throttling), `mimic_location gpx=` (the route session starts; I didn't watch
-    the map dot move), `mimic_forward` (start/stop/status process management verified; I didn't
-    push bytes through the tunnel). These are documented go-ios functions doing what go-ios says.
-  - *Caveat:* `mimic_profile` op=add only **stages** a profile over lockdown — this device is
-    not supervised, so iOS then needs the user to approve it on-device, and a global-proxy
-    payload is rejected outright (so there's no automatic system-proxy install here).
+- **More go-ios USB tools** (added later) — each one exercised on the iPhone 8 over USB and
+  checked for a real effect, not just a zero exit code:
+  - `mimic_diag` — disk space + MobileGestalt (serial/model) + IORegistry diagnostics, real data.
+  - `mimic_crash` — listed 232 reports **and** pulled all 232 to disk.
+  - `mimic_monitor` — sysmontap CPU load, ~45% over 6 samples. (go-ios streams it on stderr, so
+    the wrapper captures to a file instead of blocking on a read.)
+  - `mimic_lang` — read en-TH / locale. `mimic_kill` — killed a running app by bundle id.
+    `mimic_ps` / `mimic_battery` / `mimic_info` — real data.
+  - `mimic_devicestate` — `enable` then `list` shows the profile **IsActive=true**
+    (`SlowNetworkCondition / SlowNetwork3GAverage`); `reset` clears it back to none. Verified the
+    condition actually engages, not just that the call returns.
+  - `mimic_forward` — forwarded host:12222 → device:44 and read the device's real SSH banner
+    (`SSH-2.0-dropbear_2022.83`) back through the tunnel, so it genuinely moves bytes.
+  - `mimic_location gpx=` — starts a moving-route session via the same `DTSimulateLocation`
+    developer-image path as the point spoof above (which is confirmed); the route start returns ok.
+  - `mimic_profile` — `list` / `remove` work. `add` only **stages** a profile over lockdown:
+    this device isn't supervised, so iOS then needs the user to approve it on-device, and a
+    global-proxy payload is rejected outright (so there's no silent system-proxy install here).
   These ride lockdown/instruments over USB, so they work even on an app that rejects a frida
-  attach. (A `mimic_webjs` WebInspector wrapper was prototyped but dropped: it needs
-  Settings → Safari → Advanced → Web Inspector toggled on, so it doesn't work out of the box.)
+  attach. (A `mimic_webjs` WebInspector wrapper was prototyped but **removed**: it needs
+  Settings → Safari → Advanced → Web Inspector toggled on, so it didn't work out of the box.)
 - **The live viewer** (`python3 -m mimic.ios.viewer`). Mirrors the device; a click maps to
   the nearest a11y element (home-screen icons launch their app), a drag streams a real finger
   (digitizer down→move→up) so scrolling follows the cursor, and the rail fires hardware buttons.

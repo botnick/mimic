@@ -49,8 +49,10 @@ doc explains why). What's left is a hybrid that is boring and reliable:
 | Spoof GPS · capture pcap / syslog | `mimic_location`, `mimic_pcap`, `mimic_syslog` | works |
 | Install / uninstall / pull app-container files | `mimic_install`, `mimic_uninstall`, `mimic_files` | works |
 | Lift jetsam memory limit · toggle AssistiveTouch | `mimic_memlimit`, `mimic_assistivetouch` | works |
-| Config profiles · kill app · crash reports · diag · CPU load · lang · port-forward | `mimic_profile`, `mimic_kill`, `mimic_crash`, `mimic_diag`, `mimic_monitor`, `mimic_lang`, `mimic_forward` | works (USB; `profile add` only stages — needs on-device approval) |
-| Simulate slow-network/thermal · GPS route | `mimic_devicestate`, `mimic_location gpx=` | command runs (device-side effect not separately measured) |
+| Kill app · crash reports · diag · CPU load · lang · port-forward | `mimic_kill`, `mimic_crash`, `mimic_diag`, `mimic_monitor`, `mimic_lang`, `mimic_forward` | works (USB; `forward` verified by reading the device SSH banner through the tunnel) |
+| Simulate slow-network / thermal condition | `mimic_devicestate` | works (verified: the profile shows IsActive after `enable`) |
+| Config profiles (list / remove) | `mimic_profile` | list/remove work; `add` only stages — needs on-device approval, supervised-only payloads rejected |
+| Spoof GPS along a moving route | `mimic_location gpx=` | starts (same developer-image path as the verified point spoof) |
 
 Thirty tools, all validated on hardware (details in [docs/TESTING.md](docs/TESTING.md)).
 There is also a **[live viewer](#live-viewer)** — a native desktop window that mirrors the
